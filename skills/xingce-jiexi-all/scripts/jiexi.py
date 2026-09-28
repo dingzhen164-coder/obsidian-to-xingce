@@ -160,6 +160,18 @@ def board_files(season: Path):
     return [f for f in sorted(season.glob("[0-9][0-9]-*.md")) if not f.name.startswith("00-")]
 
 
+def norm_board(season: Path, arg: str) -> str:
+    """“04-中心理解”“04”“中心理解.md”都归一成“中心理解”"""
+    b = arg.strip()
+    if b.endswith(".md"):
+        b = b[:-3]
+    if b.isdigit():
+        for f in board_files(season):
+            if f.name.startswith(f"{int(b):02d}-"):
+                return f.stem.split("-", 1)[1]
+    return re.sub(r"^\d{1,2}-", "", b)
+
+
 def board_file(season: Path, board: str) -> Path:
     fs = sorted(season.glob(f"*-{board}.md"))
     if not fs:
@@ -387,6 +399,8 @@ def main():
     p = sub.add_parser("check"); p.add_argument("season"); p.add_argument("board", nargs="?")
     a = ap.parse_args()
     season = resolve_season(a.season)
+    if getattr(a, "board", None):
+        a.board = norm_board(season, a.board)
     if a.cmd == "status":
         cmd_status(season, not a.no_write)
     elif a.cmd == "next":
