@@ -1,0 +1,261 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+xingce-jiexi-all 的辅助脚本：读写 xingce-mokao-split 生成的板块复盘文件。
+所有“哪些题做完了”的判断都直接看复盘栏有没有内容，所以中途断了重跑即可续上。
+
+用法：
+    python jiexi.py status "<第N季目录>"                         # 看进度，并写 解析进度.md
+    python jiexi.py next   "<第N季目录>" <板块> [--mode 错题|全部] [--batch N]
+                                                                # 取下一批待解析的题
+    python jiexi.py write  "<第N季目录>" <板块> "<结果文件>" [--force]
+                                                                # 把解析写回复盘栏
+
+结果文件格式（每题一段，“=== 题号” 开头，正文不用加 “> ”，脚本会加）：
+    === 36
+    【答案】B
+    【思路】……
+    === 37
+    ⚠ 待核对：推不出正确答案 C，……
+"""
+import argparse
+import re
+import sys
+from dataclasses import dataclass, field
+from pathlib import Path
+
+for s in (sys.stdout, sys.stderr):
+    try:
+        s.reconfigure(encoding="utf-8")
+    except Exception:
+        pass
+
+SKILL_DIR = Path(__file__).resolve().parent.parent
+MAP_FILE = SKILL_DIR / "板块映射.md"
+HEAD_RE = re.compile(r"^### (\d+)\. (\S+)")
+ANS_RE = re.compile(r"正确答案：\*\*([^*]*)\*\*\s*我的答案：\*\*([^*]*)\*\*")
+MAT_RE = re.compile(r"^## 材料（第(\d+)-(\d+)题）")
+NOTE = "> [!note] 复盘"
+CHECK = "> [!check]"
+PENDING_MARK = "⚠ 待核对"
+MODES = ("错题", "全部")
+
+
+# ---------------------------------------------------------------- 映射表
+def load_mapping():
+    """板块 -> {skill, mode, batch}"""
+    m = {}
+    if not MAP_FILE.exists():
+        return m
+    for ln in MAP_FILE.read_text(encoding="utf-8").splitlines():
+        cells = [c.strip() for c in ln.strip().strip("|").split("|")]
+        if len(cells) < 4 or cells[0] in ("板块", "") or set(cells[0]) <= set("-: "):
+            continue
+        skill = "" if cells[1] in ("", "-", "—") else cells[1]
+        mode = cells[2] if cells[2] in MODES else "错题"
+        batch = int(cells[3]) if cells[3].isdigit() else 5
+        m[cells[0]] = {"skill": skill, "mode": mode, "batch": batch}
+    return m
+
+
+# ---------------------------------------------------------------- 解析板块文件
+@dataclass
+class Q:
+    num: int
+    icon: str
+    start: int            # "### N." 行号
+    end: int              # "---" 行号
+    note: int = -1        # "> [!note] 复盘" 行号
+    correct: str = ""
+    mine: str = ""
+    body: list = field(default_factory=list)  # 题干/选项/截图（不含标题和答案）
+    material: tuple = None
+
+    def analysis(self, lines):
+        if self.note < 0:
+            return []
+        out = [l for l in lines[self.note + 1:self.end]]
+        while out and out[-1].strip() in ("", ">"):
+            out.pop()
+        return out
+
+    def filled(self, lines):
+        return any(l.strip() not in ("", ">") for l in self.analysis(lines))
+
+    def flagged(self, lines):
+        return any(PENDING_MARK in l for l in self.analysis(lines))
+
+    def wrong(self):
+        return self.icon in ("❌", "⚪")
+
+
+def board_file(season: Path, board: str) -> Path:
+    fs = sorted(season.glob(f"*-{board}.md"))
+    if not fs:
+        sys.exit(f"找不到板块文件：{season}/??-{board}.md")
+    return fs[0]
+
+
+def parse_board(text):
+    lines = text.split("\n")
+    qs, mats, cur, mat = [], {}, None, None
+    for i, ln in enumerate(lines):
+        h = HEAD_RE.match(ln)
+        if h:
+            cur = Q(num=int(h.group(1)), icon=h.group(2), start=i, end=len(lines))
+            cur.material = mat if mat and mat[0] <= cur.num <= mat[1] else None
+            qs.append(cur)
+            continue
+        mm = MAT_RE.match(ln)
+        if mm:
+            mat = (int(mm.group(1)), int(mm.group(2)))
+            mats[mat] = [ln]
+            cur = None
+            continue
+        if cur is None:
+            if mat in mats and not ln.startswith("---"):
+                mats[mat].append(ln)
+            continue
+        if ln.strip() == "---":
+            cur.end = i
+            cur = None
+            continue
+        if ln.startswith(NOTE):
+            cur.note = i
+        elif cur.note < 0:
+            a = ANS_RE.search(ln)
+            if a:
+                cur.correct, cur.mine = a.group(1).strip("?"), a.group(2).strip("—")
+            elif not ln.startswith(CHECK):
+                cur.body.append(ln)
+    return lines, qs, mats
+
+
+def targets(qs, mode):
+    return [q for q in qs if mode == "全部" or q.wrong()]
+
+
+# ---------------------------------------------------------------- status
+def cmd_status(season: Path, write=True):
+    mp = load_mapping()
+    rows, flagged_all = [], []
+    for f in sorted(season.glob("[0-9][0-9]-*.md")):
+        board = f.stem.split("-", 1)[1]
+        cfg = mp.get(board, {"skill": "", "mode": "错题", "batch": 5})
+        lines, qs, _ = parse_board(f.read_text(encoding="utf-8"))
+        tg = targets(qs, cfg["mode"])
+        done = [q for q in tg if q.filled(lines)]
+        flagged = [q.num for q in qs if q.flagged(lines)]
+        flagged_all += [(board, n) for n in flagged]
+        left = [q.num for q in tg if not q.filled(lines)]
+        if not cfg["skill"]:
+            state = "跳过（无解题skill）"
+        elif not left:
+            state = "✅ 完成"
+        elif done:
+            state = "⏳ 进行中"
+        else:
+            state = "未开始"
+        rows.append((f.stem, cfg["skill"] or "-", cfg["mode"], len(qs), len(tg), len(done), len(flagged), left, state))
+
+    out = ["# 解析进度", "", "> 由 `jiexi.py status` 根据各板块复盘栏自动生成，不要手改。", "",
+           "| 板块 | 解题skill | 范围 | 题数 | 目标 | 已解析 | 待核对 | 状态 |",
+           "| --- | --- | :-: | :-: | :-: | :-: | :-: | --- |"]
+    for stem, sk, mode, n, t, d, fl, left, st in rows:
+        out.append(f"| [[{stem}]] | {sk} | {mode} | {n} | {t} | {d} | {fl} | {st} |")
+    pend = [(r[0], r[7]) for r in rows if r[1] != "-" and r[7]]
+    if pend:
+        out += ["", "## 未完成的题", ""] + [f"- {s}：{', '.join(map(str, l))}" for s, l in pend]
+    if flagged_all:
+        out += ["", "## ⚠ 待核对", ""] + [f"- {b} 第{n}题" for b, n in flagged_all]
+    text = "\n".join(out) + "\n"
+    if write:
+        (season / "解析进度.md").write_text(text, encoding="utf-8")
+    print(text)
+
+
+# ---------------------------------------------------------------- next
+def cmd_next(season: Path, board: str, mode=None, batch=None):
+    cfg = load_mapping().get(board, {"skill": "", "mode": "错题", "batch": 5})
+    mode = mode or cfg["mode"]
+    batch = batch or cfg["batch"]
+    f = board_file(season, board)
+    lines, qs, mats = parse_board(f.read_text(encoding="utf-8"))
+    left = [q for q in targets(qs, mode) if not q.filled(lines)]
+    if not left:
+        print(f"【{board}】没有待解析的题（范围：{mode}）。")
+        return
+    todo = left[:batch]
+    att = f.parent / "attachments"
+    print(f"【{board}】解题skill：{cfg['skill'] or '（未配置）'}　范围：{mode}　"
+          f"本批 {len(todo)} 题，本板块还剩 {len(left)} 题")
+    print(f"截图目录：{att}")
+    shown = set()
+    for q in todo:
+        if q.material and q.material not in shown and q.material in mats:
+            shown.add(q.material)
+            print("\n" + "=" * 20 + f" 材料（第{q.material[0]}-{q.material[1]}题） " + "=" * 20)
+            print(expand("\n".join(mats[q.material][1:]).strip(), att))
+        print("\n" + "-" * 20 + f" 第{q.num}题 " + "-" * 20)
+        print(expand("\n".join(q.body).strip(), att))
+        print(f"正确答案：{q.correct or '?'}　我的答案：{q.mine or '未作答'}")
+
+
+def expand(text, att: Path):
+    # ![[S36-Q066.png]] -> [截图] 绝对路径，方便 agent 直接打开看图
+    return re.sub(r"!\[\[([^\]|]+)[^\]]*\]\]", lambda m: f"[截图] {att / m.group(1)}", text)
+
+
+# ---------------------------------------------------------------- write
+def cmd_write(season: Path, board: str, result: Path, force=False):
+    raw = result.read_text(encoding="utf-8")
+    parts = re.split(r"^===\s*(\d+)\s*$", raw, flags=re.M)
+    res = {int(parts[i]): parts[i + 1].strip("\n") for i in range(1, len(parts) - 1, 2)}
+    if not res:
+        sys.exit("结果文件里没有找到 “=== 题号” 段落。")
+    f = board_file(season, board)
+    lines, qs, _ = parse_board(f.read_text(encoding="utf-8"))
+    by_num = {q.num: q for q in qs}
+    ok, skipped, missing = [], [], []
+    # 从后往前改，行号不乱
+    for num in sorted(res, key=lambda n: by_num[n].start if n in by_num else -1, reverse=True):
+        q = by_num.get(num)
+        if q is None or q.note < 0:
+            missing.append(num); continue
+        if q.filled(lines) and not force:
+            skipped.append(num); continue
+        body = [l.rstrip() for l in res[num].strip().split("\n")]
+        body = [(l if l.startswith(">") else ("> " + l if l.strip() else ">")) for l in body]
+        lines[q.note + 1:q.end] = body + [""]
+        ok.append(num)
+    f.write_text("\n".join(lines), encoding="utf-8")
+    print(f"已写入 {f.name}：{sorted(ok)}")
+    if skipped:
+        print(f"⚠ 复盘栏已有内容，未覆盖（确需覆盖加 --force）：{sorted(skipped)}")
+    if missing:
+        print(f"⚠ 板块里没有这些题号：{sorted(missing)}")
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    sub = ap.add_subparsers(dest="cmd", required=True)
+    p = sub.add_parser("status"); p.add_argument("season")
+    p.add_argument("--no-write", action="store_true")
+    p = sub.add_parser("next"); p.add_argument("season"); p.add_argument("board")
+    p.add_argument("--mode", choices=MODES); p.add_argument("--batch", type=int)
+    p = sub.add_parser("write"); p.add_argument("season"); p.add_argument("board"); p.add_argument("result")
+    p.add_argument("--force", action="store_true")
+    a = ap.parse_args()
+    season = Path(a.season).resolve()
+    if not season.is_dir():
+        sys.exit(f"找不到目录：{season}")
+    if a.cmd == "status":
+        cmd_status(season, not a.no_write)
+    elif a.cmd == "next":
+        cmd_next(season, a.board, a.mode, a.batch)
+    else:
+        cmd_write(season, a.board, Path(a.result), a.force)
+
+
+if __name__ == "__main__":
+    main()
