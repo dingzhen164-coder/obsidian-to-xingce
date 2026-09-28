@@ -94,7 +94,10 @@ def main():
     if not vault.is_dir():
         sys.exit(f"找不到目录：{vault}")
     R = Report()
+    step = lambda t: print(f"… {t}", flush=True)
+    step("扫描文件")
     files = list(walk(vault))
+    step(f"共 {len(files)} 个文件")
     rel = lambda p: str(p.relative_to(vault)).replace("\\", "/")
 
     # ---------------------------------------------------------------- 1. 概览
@@ -115,6 +118,7 @@ def main():
     R.add("", f"共 {len(files)} 个文件（不含 {', '.join(sorted(SKIP_DIRS))}）。")
 
     # ---------------------------------------------------------------- 2. 同步残留
+    step("检查同步残留")
     R.h("2. 同步与残留文件")
     conflict = [rel(f) for f in files if re.search(r"冲突|conflict|conflicted copy", f.name, re.I)]
     R.items("坚果云 / 同步冲突副本（需人工对比后删除）", conflict, "❌")
@@ -128,6 +132,7 @@ def main():
     R.items("skill 备份 / 旧目录（确认无用后可删）", backups + old_roots, "⚪")
 
     # ---------------------------------------------------------------- 3. skills
+    step("检查 skills")
     R.h("3. Skills")
     scripts = vault / "copilot" / "skills" / "xingce-jiexi-all" / "scripts"
     doctor = load_module(scripts / "skills_doctor.py", "skills_doctor")
@@ -179,6 +184,7 @@ def main():
         R.items("SKILL.md 体量偏大", big, "⚠")
 
     # ---------------------------------------------------------------- 4. 板块映射 & 各季
+    step("检查板块与各季")
     R.h("4. 板块映射与各季解析")
     jiexi = load_module(scripts / "jiexi.py", "jiexi")
     if jiexi:
@@ -236,6 +242,7 @@ def main():
         R.add("", "跑解析时建议在**不属于任何项目**的对话里进行，避免额外读项目说明。")
 
     # ---------------------------------------------------------------- 6. 笔记质量
+    step("检查笔记和链接")
     R.h("6. 笔记")
     mds = [f for f in files if f.suffix == ".md"]
     names = Counter()
@@ -246,7 +253,9 @@ def main():
         names[f.stem] += 1
     empty, crlf, broken_links = [], 0, []
     link_re = re.compile(r"!?\[\[([^\]|#^]*)(?:[#^][^\]|]*)?(?:\|[^\]]*)?\]\]")
-    for f in mds:
+    for i, f in enumerate(mds, 1):
+        if i % 500 == 0:
+            step(f"已检查 {i}/{len(mds)} 篇笔记")
         try:
             raw = f.read_bytes()
         except OSError:
@@ -264,13 +273,18 @@ def main():
             if not tgt:
                 continue
             last = tgt.replace("\\", "/").split("/")[-1].lower()
-            if last not in stems and last + ".md" not in stems and last not in {s for s in stems}:
+            if last not in stems and last + ".md" not in stems:
                 broken_links.append(f"{rel(f)} → [[{tgt}]]")
     R.items("空白笔记", empty, "⚪")
     dup = [f"{n}（{c} 个）" for n, c in names.items() if c > 1 and n not in ("SKILL", "README", "index", "project", "CLAUDE")]
     R.items("同名笔记（[[链接]] 可能指错文件）", sorted(dup), "⚪")
     R.items("断开的 [[链接]]（目标笔记不存在）", broken_links, "⚠")
-    big = [f"{rel(f)}（{human(f.stat().st_size)}）" for f in files if f.stat().st_size > 20 * 1024 * 1024]
+    def _size(f):
+        try:
+            return f.stat().st_size
+        except OSError:
+            return 0
+    big = [f"{rel(f)}（{human(_size(f))}）" for f in files if _size(f) > 20 * 1024 * 1024]
     R.items("超过 20MB 的大文件（拖慢坚果云同步，考虑移出库）", big, "⚪")
     R.add(f"md 共 {len(mds)} 个，其中 Windows 换行（CRLF）{crlf} 个——不影响使用，只是两台电脑都改时同步差异会变大。")
 
