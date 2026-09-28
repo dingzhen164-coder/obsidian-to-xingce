@@ -45,6 +45,12 @@ MAT_RE = re.compile(r"^## 材料（第(\d+)-(\d+)题）")
 NOTE = "> [!note] 复盘"
 CHECK = "> [!check]"
 PENDING_MARK = "⚠ 待核对"
+# 复盘栏里自带的空模板行，如 “> - 错因：” “> - 考点：” “> - 下次怎么做：”，不算已写内容
+PLACEHOLDER_RE = re.compile(r"^>\s*(?:[-*]\s*)?(?:\*\*)?[^：:>*]{1,12}[：:](?:\*\*)?\s*$")
+
+
+def is_placeholder(line):
+    return bool(PLACEHOLDER_RE.match(line.strip()))
 MODES = ("错题", "全部")
 DEFAULT_CFG = {"skill": "", "mode": "错题", "batch": 5, "ready": False}
 SKILLS_ROOT = SKILL_DIR.parent  # 板块 skill 和本 skill 放在同一个 skills/ 目录下
@@ -114,7 +120,11 @@ class Q:
         return out
 
     def filled(self, lines):
-        return any(l.strip() not in ("", ">") for l in self.analysis(lines))
+        return any(l.strip() not in ("", ">") and not is_placeholder(l) for l in self.analysis(lines))
+
+    def template(self, lines):
+        """复盘栏里的空模板行（写解析时保留在解析下面）"""
+        return [l for l in self.analysis(lines) if is_placeholder(l)]
 
     def flagged(self, lines):
         return any(PENDING_MARK in l for l in self.analysis(lines))
@@ -272,6 +282,9 @@ def cmd_write(season: Path, board: str, result: Path, force=False):
             skipped.append(num); continue
         body = [l.rstrip() for l in res[num].strip().split("\n")]
         body = [(l if l.startswith(">") else ("> " + l if l.strip() else ">")) for l in body]
+        tpl = [] if force else q.template(lines)
+        if tpl:
+            body += [">"] + tpl
         lines[q.note + 1:q.end] = body + [""]
         ok.append(num)
     write_lf(f, "\n".join(lines))
