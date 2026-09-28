@@ -84,7 +84,6 @@ When you ask about a topic not covered in Core Frameworks below, I will read the
 ## Supporting Files
 
 - [glossary.md](glossary.md) — 核心逻辑专有名词与公考概念体系
-- [patterns.md](patterns.md) — 典型解题模式、技巧与反模式
 - [cheatsheet.md](cheatsheet.md) — 高频模型决策规则与选项判断速查
 
 ---

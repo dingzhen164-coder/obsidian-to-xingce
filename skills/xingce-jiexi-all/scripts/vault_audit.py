@@ -116,11 +116,15 @@ def main():
     for k, (md, other, size) in sorted(top.items(), key=lambda kv: -kv[1][2]):
         R.add(f"| {k} | {md} | {other} | {human(size)} |")
     R.add("", f"共 {len(files)} 个文件（不含 {', '.join(sorted(SKIP_DIRS))}）。")
+    for k, (md, other, size) in top.items():
+        if (md + other) > 0.5 * len(files) and len(files) > 5000:
+            R.issue("⚠", f"「{k}」占了全库 {(md + other) * 100 // len(files)}% 的文件（{md + other} 个）——会拖慢 Obsidian 索引、坚果云同步和 AI 搜索，考虑移出库或在 Obsidian 里排除")
 
     # ---------------------------------------------------------------- 2. 同步残留
     step("检查同步残留")
     R.h("2. 同步与残留文件")
-    conflict = [rel(f) for f in files if re.search(r"冲突|conflict|conflicted copy", f.name, re.I)]
+    conflict = [rel(f) for f in files if re.search(
+        r"冲突副本|[\(（_]\s*冲突|conflicted copy|[\s(_]conflict[\s_)\d]|\.conflict\b", f.name, re.I)]
     R.items("坚果云 / 同步冲突副本（需人工对比后删除）", conflict, "❌")
     junk = [rel(f) for f in files if f.name in (".DS_Store", "Thumbs.db", "desktop.ini") or f.name.startswith("~$")
             or f.suffix in (".tmp", ".crdownload", ".part")]
@@ -173,8 +177,9 @@ def main():
                 hard.append(f"{d.name}：{', '.join(sorted(set(paths))[:3])}")
             if tk > 6000:
                 big.append(f"{d.name}：SKILL.md 约 {tk} token（每次加载都要付，建议把细节移到 chapters/cheatsheet）")
-            for link in re.findall(r"\]\(((?:chapters|references)/[^)#]+|[\w.-]+\.md)\)", t):
-                if not (d / link).exists():
+            t_nocode = re.sub(r"```.*?```|~~~~.*?~~~~", "", t, flags=re.S)
+            for link in re.findall(r"\]\(((?:chapters|references)/[^)#]+|[\w.-]+\.md)\)", t_nocode):
+                if "<" not in link and not (d / link).exists():
                     broken.append(f"{d.name} → {link}")
             if name in BOARD_SKILLS and disp != "✅":
                 R.issue("❌", f"{d.name} 缺少「被 xingce-jiexi-all 调度时」一节（重新运行安装命令）")
@@ -244,7 +249,8 @@ def main():
     # ---------------------------------------------------------------- 6. 笔记质量
     step("检查笔记和链接")
     R.h("6. 笔记")
-    mds = [f for f in files if f.suffix == ".md"]
+    in_skills = lambda f: "skills" in f.relative_to(vault).parts or "copilot-conversations" in f.relative_to(vault).parts
+    mds = [f for f in files if f.suffix == ".md" and not in_skills(f)]
     names = Counter()
     stems = set()
     for f in files:
@@ -264,8 +270,6 @@ def main():
             empty.append(rel(f))
         if b"\r\n" in raw:
             crlf += 1
-        if "/copilot/skills/" in rel(f) or "/.opencode/" in rel(f):
-            continue
         text = raw.decode("utf-8", errors="ignore")
         text = re.sub(r"```.*?```", "", text, flags=re.S)
         for tgt in link_re.findall(text):
@@ -276,9 +280,15 @@ def main():
             if last not in stems and last + ".md" not in stems:
                 broken_links.append(f"{rel(f)} → [[{tgt}]]")
     R.items("空白笔记", empty, "⚪")
-    dup = [f"{n}（{c} 个）" for n, c in names.items() if c > 1 and n not in ("SKILL", "README", "index", "project", "CLAUDE")]
+    repo_files = {"skill", "readme", "index", "project", "claude", "agents", "license", "changelog", "contributing",
+                  "security", "backers", "404", "bug_report", "feature_request", "pull_request_template", "code_of_conduct"}
+    dup = [f"{n}（{c} 个）" for n, c in names.items()
+           if c > 1 and n.lower() not in repo_files and not n.lower().startswith(("readme", "security"))]
     R.items("同名笔记（[[链接]] 可能指错文件）", sorted(dup), "⚪")
-    R.items("断开的 [[链接]]（目标笔记不存在）", broken_links, "⚠")
+    if broken_links:
+        per = Counter(b.split("/")[0] for b in broken_links)
+        R.add("断链按顶层文件夹统计：" + "，".join(f"{k} {v}" for k, v in per.most_common()), "")
+    R.items("断开的 [[链接]]（目标笔记不存在；不含 skills 目录里的示例链接）", broken_links, "⚠")
     def _size(f):
         try:
             return f.stat().st_size
