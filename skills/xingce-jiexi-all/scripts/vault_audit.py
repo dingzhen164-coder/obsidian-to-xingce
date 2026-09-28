@@ -142,13 +142,21 @@ def main():
     doctor = load_module(scripts / "skills_doctor.py", "skills_doctor")
     if doctor:
         dl = []
-        roots = {"copilot/skills": vault / "copilot" / "skills", ".opencode/skills": vault / ".opencode" / "skills"}
+        roots = {"copilot/skills": vault / "copilot" / "skills", ".opencode/skills": vault / ".opencode" / "skills",
+                 ".copilot/skills": vault / ".copilot" / "skills"}
         for label, root in roots.items():
             if root.is_dir():
                 dl.append(f"[{label}]")
                 doctor.normalize_root(root, False, dl.append)
-        if all(r.is_dir() for r in roots.values()):
-            doctor.mirror(roots["copilot/skills"], roots[".opencode/skills"], False, dl.append)
+        if roots["copilot/skills"].is_dir():
+            for label, add in ((".opencode/skills", True), (".copilot/skills", False)):
+                if roots[label].is_dir():
+                    kw = {}
+                    try:
+                        doctor.mirror(roots["copilot/skills"], roots[label], False, dl.append, add_enabled=add, label=label.split("/")[0])
+                        doctor.orphans(roots["copilot/skills"], roots[label], False, False, dl.append, label.split("/")[0])
+                    except TypeError:  # 旧版 skills_doctor
+                        doctor.mirror(roots["copilot/skills"], roots[label], False, dl.append)
         probs = [l.strip() for l in dl if "🔧" in l or "⚠" in l]
         R.items("skill 结构问题（运行 skills_doctor.py --fix 可自动修）", probs, "❌")
     else:

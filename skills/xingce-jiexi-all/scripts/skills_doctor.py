@@ -6,13 +6,15 @@ skill 体检：检查并修复库里 copilot/skills 与 .opencode/skills 两处 
 用法：
     python skills_doctor.py "<库根目录，即 行测/>"          # 只检查，打印报告
     python skills_doctor.py "<库根目录>" --fix              # 检查并修复
+    python skills_doctor.py "<库根目录>" --fix --prune      # 另外把隐藏目录里的“孤儿”skill 移到备份
 
 检查 / 修复的问题（对所有 skill，不只行测板块）：
 1. 文件夹名和 SKILL.md 里的 name: 不一致 → 改名为 name:
 2. 同一个 name: 有两个文件夹（如改名后旧文件夹又被同步回来）→ 把另一个文件夹里缺的文件补进
    与 name 同名的那个，再把另一个移到 skills-backup/（不直接删除）
-3. .opencode/skills 里的副本是旧版或缺文件（章节、cheatsheet 等）→ 以 copilot/skills 为准补齐 / 更新
-   （只处理 .opencode 里已有、或 SKILL.md 标了 copilot-enabled-agents: opencode 的 skill）
+3. .opencode/skills、.copilot/skills 里的副本是旧版或缺文件（章节、cheatsheet 等）→ 以 copilot/skills 为准补齐 / 更新
+   （.opencode：处理已有的、或 SKILL.md 标了 copilot-enabled-agents: opencode 的；.copilot：只处理已有的）
+4. 隐藏目录里有、copilot/skills 里已经没有的“孤儿”skill（通常是你删过的旧 skill）→ 列出；加 --prune 移到备份
 修复后请彻底重启 Obsidian，让 Copilot 重新读取 skill。
 """
 import filecmp
@@ -101,15 +103,15 @@ def normalize_root(root: Path, fix: bool, log):
     return groups
 
 
-def mirror(src_root: Path, dst_root: Path, fix: bool, log):
-    """问题 3：以 copilot/skills 为准，更新 .opencode/skills 里的副本"""
+def mirror(src_root: Path, dst_root: Path, fix: bool, log, add_enabled=True, label=".opencode"):
+    """问题 3：以 copilot/skills 为准，更新隐藏目录里的副本"""
     for d in skill_dirs(src_root):
         name = skill_name(d)
         if name is None:
             continue
         dst = dst_root / d.name
         enabled = "copilot-enabled-agents" in (d / "SKILL.md").read_text(encoding="utf-8", errors="ignore")
-        if not dst.exists() and not enabled:
+        if not dst.exists() and not (enabled and add_enabled):
             continue
         existed = dst.exists()
         changed, added = [], []
@@ -132,29 +134,51 @@ def mirror(src_root: Path, dst_root: Path, fix: bool, log):
                 what.append(f"{len(changed)} 个文件是旧版" + ("（含 SKILL.md）" if any(t.name == "SKILL.md" for t in changed) else ""))
             if added:
                 what.append("整个 skill 不存在" if not existed else f"缺 {len(added)} 个文件")
-            log(f"  🔧 .opencode/{d.name}：{'，'.join(what)} → 以 copilot/skills 为准更新")
+            log(f"  🔧 {label}/{d.name}：{'，'.join(what)} → 以 copilot/skills 为准更新")
+
+
+def orphans(src_root: Path, dst_root: Path, fix: bool, prune: bool, log, label):
+    """问题 4：隐藏目录里有、copilot/skills 里没有的 skill"""
+    names = {skill_name(d) or d.name for d in skill_dirs(src_root)} | {d.name for d in skill_dirs(src_root)}
+    for d in skill_dirs(dst_root):
+        if not (d / "SKILL.md").is_file() or d.name in names or (skill_name(d) in names):
+            continue
+        if prune and fix:
+            dest = backup(dst_root, d, True)
+            log(f"  🔧 {label}/{d.name}：孤儿 skill（copilot/skills 里已没有）→ 已移到 {dest}")
+        else:
+            log(f"  ⚠ {label}/{d.name}：孤儿 skill（copilot/skills 里已没有，多半是删过的旧 skill；加 --fix --prune 移到备份）")
 
 
 def main():
     args = [a for a in sys.argv[1:] if not a.startswith("--")]
     fix = "--fix" in sys.argv
+    prune = "--prune" in sys.argv
     if len(args) != 1:
         sys.exit(__doc__)
     vault = Path(args[0]).expanduser().resolve()
-    roots = {"copilot/skills": vault / "copilot" / "skills", ".opencode/skills": vault / ".opencode" / "skills"}
+    roots = {"copilot/skills": vault / "copilot" / "skills", ".opencode/skills": vault / ".opencode" / "skills",
+             ".copilot/skills": vault / ".copilot" / "skills"}
     lines = []
     log = lines.append
     for label, root in roots.items():
         if root.is_dir():
             log(f"[{label}]")
             normalize_root(root, fix, log)
-    if roots["copilot/skills"].is_dir() and roots[".opencode/skills"].is_dir():
-        log("[.opencode/skills 与 copilot/skills 对比]")
-        mirror(roots["copilot/skills"], roots[".opencode/skills"], fix, log)
-    problems = [l for l in lines if "🔧" in l or "⚠" in l]
+    src = roots["copilot/skills"]
+    if src.is_dir():
+        for label, add in ((".opencode/skills", True), (".copilot/skills", False)):
+            if roots[label].is_dir():
+                log(f"[{label} 与 copilot/skills 对比]")
+                mirror(src, roots[label], fix, log, add_enabled=add, label=label.split("/")[0])
+                orphans(src, roots[label], fix, prune, log, label.split("/")[0])
+    problems = [l for l in lines if ("🔧" in l or "⚠" in l) and "孤儿" not in l]
+    orphan_lines = [l for l in lines if "孤儿" in l and "⚠" in l]
     print("\n".join(lines))
+    if orphan_lines:
+        print(f"ℹ 隐藏目录里有 {len(orphan_lines)} 个孤儿 skill（见上）。确认都是不要的旧 skill 后，运行同一命令加 --fix --prune 移到备份。")
     if not problems:
-        print("✅ 没发现问题")
+        print("✅ 没发现需要修的问题")
     elif fix:
         print(f"✅ 已修复 {sum('🔧' in l for l in problems)} 处。请彻底重启 Obsidian，让 Copilot 重新读取 skill。")
     else:
