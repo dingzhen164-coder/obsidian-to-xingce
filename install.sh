@@ -45,6 +45,8 @@ done
 echo "[4/5] 板块 skill 已更新"
 
 # 5) 安装 / 更新 总调度 和 拆卷 skill
+# 旧版本里的中文文件名（已改名为 board-map.md / board-skill-template.md）
+rm -f "$SK/xingce-jiexi-all/板块映射.md" "$SK/xingce-jiexi-all/板块skill模板.md"
 for s in xingce-jiexi-all xingce-mokao-split; do
   mkdir -p "$SK/$s"
   cp -R "$src/$s/." "$SK/$s/"

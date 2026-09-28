@@ -8,13 +8,13 @@
 
 ## 二、新写的板块 skill：复制下面的模板
 
-1. 在 `skills/` 下建文件夹，名字**严格用** `板块映射.md` 里给的名字（如 `xingce-shuliang`）；
+1. 在 `skills/` 下建文件夹，名字**严格用** `board-map.md` 里给的名字（如 `xingce-shuliang`）；
 2. 新建 `SKILL.md`，复制下面代码块里的全部内容，把 `<>` 里的换掉，写好“解题方法”；
 3. 完成。总调度会自动发现它，不用改任何别的文件。
 
 ~~~~markdown
 ---
-name: <照板块映射.md里的名字，如 xingce-shuliang>
+name: <照board-map.md里的名字，如 xingce-shuliang>
 description: 行测<板块名>题的解题方法与解析写法。用户让解析/讲解/复盘<板块名>题（<列几个典型题型关键词>），或 xingce-jiexi-all 调度<板块名>板块时使用。
 ---
 

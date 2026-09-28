@@ -38,7 +38,7 @@ def write_lf(path, text):
 
 
 SKILL_DIR = Path(__file__).resolve().parent.parent
-MAP_FILE = SKILL_DIR / "板块映射.md"
+MAP_FILE = SKILL_DIR / "board-map.md"
 HEAD_RE = re.compile(r"^### (\d+)\. (\S+)")
 ANS_RE = re.compile(r"正确答案：\*\*([^*]*)\*\*\s*我的答案：\*\*([^*]*)\*\*")
 MAT_RE = re.compile(r"^## 材料（第(\d+)-(\d+)题）")

@@ -45,6 +45,11 @@ foreach ($s in $BoardSkills) {
 Write-Host "[4/5] board skills updated"
 
 # 5) install / update our own skills (copy contents, never nest folders)
+# remove old non-ASCII-named files of earlier versions (now board-map.md / board-skill-template.md)
+$jd = Join-Path $SK "xingce-jiexi-all"
+if (Test-Path $jd) {
+  Get-ChildItem $jd -Filter *.md | Where-Object { $_.Name -notmatch '^(SKILL|board-[a-z-]+)\.md$' } | Remove-Item -Force
+}
 foreach ($s in "xingce-jiexi-all","xingce-mokao-split") {
   $d = Join-Path $SK $s
   New-Item $d -ItemType Directory -Force | Out-Null

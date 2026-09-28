@@ -1,6 +1,6 @@
 ---
 name: xingce-jiexi-all
-description: 行测模考一键生成解析的总调度 skill——读取 xingce-mokao-split 拆好的“第N季”板块复盘文件，按“板块映射.md”自动找到每个板块的解题 skill，逐板块派给它把解析直接写进每道题的“复盘”栏，支持只做错题、指定板块、断点续跑。用户说“给第36季生成解析/写解析/填复盘”“把错题都解析一下”“继续上次的解析”时使用。只解析单个板块且用户点名了某个解题 skill 时，直接用那个 skill 即可。
+description: 行测模考一键生成解析的总调度 skill——读取 xingce-mokao-split 拆好的“第N季”板块复盘文件，按“board-map.md”自动找到每个板块的解题 skill，逐板块派给它把解析直接写进每道题的“复盘”栏，支持只做错题、指定板块、断点续跑。用户说“给第36季生成解析/写解析/填复盘”“把错题都解析一下”“继续上次的解析”时使用。只解析单个板块且用户点名了某个解题 skill 时，直接用那个 skill 即可。
 metadata:
   copilot-enabled-agents: opencode
 ---
@@ -10,7 +10,7 @@ metadata:
 本 skill **只负责派活和验收，不含任何解题方法，也不自己写解析**。
 
 - 解题方法和解析写法：在各板块自己的 skill 里；
-- 哪个板块用哪个 skill：在 `板块映射.md` 里（13 个名字已定好，新 skill 照名字建好就会被自动发现）；
+- 哪个板块用哪个 skill：在 `board-map.md` 里（13 个名字已定好，新 skill 照名字建好就会被自动发现）；
 - 读写板块 md 的固定操作：在 `scripts/jiexi.py` 里。
 
 下文 `<jiexi>` 指本 skill 目录下的 `scripts/jiexi.py`。路径含中文和括号，一律加英文双引号；命令里的 `python`：Windows 用 `python`（不行换 `py`），Mac 用 `python3`。
@@ -44,7 +44,7 @@ python "<jiexi>" status "<第N季目录>"
 
 - **有子代理/子任务功能时**（Claude Code 的 Task、opencode 的 subagent 等）：每个板块开一个新的子代理，把上面这句话连同季数目录、jiexi 路径交给它。子代理之间上下文互不污染，一个板块出错不影响别的板块。**逐个派发，不要并行**——并行会同时触发限流。
 - **没有子代理功能时**：在当前对话里加载该板块 skill，照它的调度流程做；做完一个板块，后面不再引用它的内容，再加载下一个板块的 skill。**不要一次把多个板块 skill 都读进来。**
-- 板块 skill 里如果还没有「被 xingce-jiexi-all 调度时」一节（旧 skill 没加），按 `板块skill模板.md` 里那一节的流程代为执行：用该 skill 的解题方法解题，用 `jiexi.py next / write` 取题和写入。
+- 板块 skill 里如果还没有「被 xingce-jiexi-all 调度时」一节（旧 skill 没加），按 `board-skill-template.md` 里那一节的流程代为执行：用该 skill 的解题方法解题，用 `jiexi.py next / write` 取题和写入。
 
 板块 skill 会自己把解析写进板块 md（`next` 取一批 → 解题 → `write` 写回 → 直到做完）。
 
@@ -78,6 +78,6 @@ python "<jiexi>" check "<第N季目录>" <板块>
 
 ## 附：新增 / 修改板块 skill
 
-- **新增**：照 `板块skill模板.md` 写，文件夹名用 `板块映射.md` 里定好的名字，放在同一个 `skills/` 目录下。不用改本 skill 和映射表。
+- **新增**：照 `board-skill-template.md` 写，文件夹名用 `board-map.md` 里定好的名字，放在同一个 `skills/` 目录下。不用改本 skill 和映射表。
 - **修改解题方法**：只改那个板块 skill 的「解题方法 / 解析写法」，「被 xingce-jiexi-all 调度时」一节保持不动。
-- **换成另一个 skill**：只改 `板块映射.md` 里那一行的名字。
+- **换成另一个 skill**：只改 `board-map.md` 里那一行的名字。
