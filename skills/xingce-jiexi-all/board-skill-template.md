@@ -74,3 +74,12 @@ description: 行测<板块名>题的解题方法与解析写法。用户让解�
 - 复盘栏已有内容的题不要动（只有 `- 错因：` `- 考点：` `- 下次怎么做：` 这类空模板的不算有内容，写解析时把这几行模板原样保留在解析下面）；
 - 不改题干、选项、答案行、frontmatter 和速览表。
 ~~~~
+
+## 三、新建或改完 skill 之后：体检一次
+
+新建 skill、改名、或在一台电脑上改完后，运行一次体检，把 `.opencode/skills` 同步好（修完要彻底重启 Obsidian）：
+
+```
+python "<skills目录>/xingce-jiexi-all/scripts/skills_doctor.py" "<库根目录 行测>" --fix
+```
+
