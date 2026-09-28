@@ -123,6 +123,11 @@ class Q:
         return self.icon in ("❌", "⚪")
 
 
+def board_files(season: Path):
+    # 01-政治理论.md … 13-资料分析.md；00-第N季总览.md 不算板块
+    return [f for f in sorted(season.glob("[0-9][0-9]-*.md")) if not f.name.startswith("00-")]
+
+
 def board_file(season: Path, board: str) -> Path:
     fs = sorted(season.glob(f"*-{board}.md"))
     if not fs:
@@ -173,7 +178,7 @@ def targets(qs, mode):
 def cmd_status(season: Path, write=True):
     mp = load_mapping()
     rows, flagged_all = [], []
-    for f in sorted(season.glob("[0-9][0-9]-*.md")):
+    for f in board_files(season):
         board = f.stem.split("-", 1)[1]
         cfg = mp.get(board, DEFAULT_CFG)
         lines, qs, _ = parse_board(f.read_text(encoding="utf-8"))
@@ -186,6 +191,8 @@ def cmd_status(season: Path, write=True):
             state = "跳过（未指定解题skill）"
         elif not cfg["ready"]:
             state = f"跳过（{cfg['skill']} 尚未创建）"
+        elif not tg:
+            state = "✅ 无错题" if cfg["mode"] == "错题" else "✅ 无题"
         elif not left:
             state = "✅ 完成"
         elif done:
@@ -313,7 +320,7 @@ def check_board(f: Path):
 
 
 def cmd_check(season: Path, board=None):
-    files = [board_file(season, board)] if board else sorted(season.glob("[0-9][0-9]-*.md"))
+    files = [board_file(season, board)] if board else board_files(season)
     bad = 0
     for f in files:
         probs = check_board(f)
