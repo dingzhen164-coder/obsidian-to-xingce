@@ -18,10 +18,13 @@ if [ -z "${SK:-}" ]; then
 fi
 echo "[1/5] skills 目录：$SK"
 
+command -v python3 >/dev/null || { echo "没有 python3：请先在终端运行 xcode-select --install"; exit 1; }
+
 # 2) 下载
 tmp=$(mktemp -d)
 curl -fsSL "$ZIP" -o "$tmp/src.zip"
-unzip -q "$tmp/src.zip" -d "$tmp"
+# 用 Python 解压：Mac 自带的 unzip 处不了中文文件名（会报 disk full 并卡住）
+python3 -m zipfile -e "$tmp/src.zip" "$tmp" </dev/null
 src=$(find "$tmp" -maxdepth 1 -type d -name 'obsidian-to-xingce-*' | head -1)/skills
 echo "[2/5] 已下载"
 
