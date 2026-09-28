@@ -15,7 +15,9 @@ metadata:
 
 下文 `<jiexi>` 指本 skill 目录下的 `scripts/jiexi.py`。路径含中文和括号，一律加英文双引号；命令里的 `python`：Windows 用 `python`（不行换 `py`），Mac 用 `python3`。
 
-**直接开始，不要摸索**：下面每一步的命令都可以直接运行，`<季>` 写季数（如 `36`），脚本会自己找到 `FB模考试卷复盘/板块复盘/第36季/`。**不要** ls / find / grep 库里的文件，**不要**读 jiexi.py 源码、board-map.md、板块文件或 `projects/` 等目录——需要的信息 `status` / `next` 都会打印出来。
+**直接开始，不要摸索**：下面每一步的命令都可以直接运行，`<季>` 写季数（如 `36`），脚本会自己找到 `FB模考试卷复盘/板块复盘/第36季/`。**不要** ls / find / grep 库里的文件，**不要**读 jiexi.py 源码、board-map.md、`projects/` 等目录，**也不要打开板块 md 文件**——题目、答案、截图路径 `next` 都会打印出来，写入用 `write`。
+
+**Windows PowerShell**：中文输出会乱码，每条 python 命令前固定加 `[Console]::OutputEncoding=[Text.Encoding]::UTF8;`（同一行），不用先试一次再加。
 
 ## 一、确认任务
 

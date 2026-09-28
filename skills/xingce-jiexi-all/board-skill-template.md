@@ -44,7 +44,9 @@ description: 行测<板块名>题的解题方法与解析写法。用户让解�
 
 `<jiexi>` 指 `xingce-jiexi-all/scripts/jiexi.py`（和本 skill 在同一个 skills 目录下）。路径一律加英文双引号；命令里的 `python`：Windows 用 `python`（不行换 `py`），Mac 用 `python3`。
 
-**直接开始，不要摸索**：用户说“给第N季生成解析 / 只做某板块”时，直接运行下面的命令，`<季>` 写季数（如 `36`）即可，脚本会自己找到目录。**不要** ls / find / grep 库里的文件，**不要**读 jiexi.py 源码、board-map.md、其它板块文件或 `projects/` 等目录——需要的信息 `status` / `next` 都会打印出来。
+**直接开始，不要摸索**：用户说“给第N季生成解析 / 只做某板块”时，直接运行下面的命令，`<季>` 写季数（如 `36`）即可，脚本会自己找到目录。**不要** ls / find / grep 库里的文件，**不要**读 jiexi.py 源码、board-map.md、`projects/` 等目录，**也不要打开板块 md 文件本身**——题目、答案、截图路径 `next` 都会打印出来，写入用 `write`。
+
+**Windows PowerShell**：中文输出会乱码，每条 python 命令前固定加 `[Console]::OutputEncoding=[Text.Encoding]::UTF8;`（同一行），不用先试一次再加。
 
 1. 取一批题：`python "<jiexi>" next <季> <板块名> [--mode 错题|全部]`
    输出里有板块文件路径、本批题号、题干、选项、正确答案、我的答案，以及截图完整路径。有 `[截图]` 的必须打开截图看。

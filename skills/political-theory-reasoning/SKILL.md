@@ -10,6 +10,8 @@ metadata:
 
 # political-theory-reasoning
 
+> **被 xingce-jiexi-all 调度、或用户说“给第N季生成解析 / 只做某板块”时**：直接跳到本文件末尾「被 xingce-jiexi-all 调度时」一节照做。如果加载进来的内容里看不到那一节，只用一次 Read 读本 SKILL.md 的末尾部分，不要再找别的文件。
+
 ## 适用范围
 
 本 Skill 用于政治理论类题目的最终分析。
@@ -127,7 +129,9 @@ Obsidian 库（根目录为 `行测obsidian/行测/`）里的 `政治理论/00-�
 
 `<jiexi>` 指 `xingce-jiexi-all/scripts/jiexi.py`（和本 skill 在同一个 skills 目录下）。路径一律加英文双引号；命令里的 `python`：Windows 用 `python`（不行换 `py`），Mac 用 `python3`。
 
-**直接开始，不要摸索**：用户说“给第N季生成解析 / 只做某板块”时，直接运行下面的命令，`<季>` 写季数（如 `36`）即可，脚本会自己找到目录。**不要** ls / find / grep 库里的文件，**不要**读 jiexi.py 源码、board-map.md、其它板块文件或 `projects/` 等目录——需要的信息 `status` / `next` 都会打印出来。
+**直接开始，不要摸索**：用户说“给第N季生成解析 / 只做某板块”时，直接运行下面的命令，`<季>` 写季数（如 `36`）即可，脚本会自己找到目录。**不要** ls / find / grep 库里的文件，**不要**读 jiexi.py 源码、board-map.md、`projects/` 等目录，**也不要打开板块 md 文件本身**——题目、答案、截图路径 `next` 都会打印出来，写入用 `write`。
+
+**Windows PowerShell**：中文输出会乱码，每条 python 命令前固定加 `[Console]::OutputEncoding=[Text.Encoding]::UTF8;`（同一行），不用先试一次再加。
 
 ### 流程
 
