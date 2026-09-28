@@ -89,19 +89,21 @@ This skill covers the book content only. For hands-on implementation in your que
 
 `<jiexi>` 指 `xingce-jiexi-all/scripts/jiexi.py`（和本 skill 在同一个 skills 目录下）。路径一律加英文双引号；命令里的 `python`：Windows 用 `python`（不行换 `py`），Mac 用 `python3`。
 
+**直接开始，不要摸索**：用户说“给第N季生成解析 / 只做某板块”时，直接运行下面的命令，`<季>` 写季数（如 `36`）即可，脚本会自己找到目录。**不要** ls / find / grep 库里的文件，**不要**读 jiexi.py 源码、board-map.md、其它板块文件或 `projects/` 等目录——需要的信息 `status` / `next` 都会打印出来。
+
 ### 流程
 
 1. **开工前准备（整个板块只做一次）**：读本文件的 Core Frameworks。不预先读章节。
-2. 取一批题：`python "<jiexi>" next "<第N季目录>" 形式逻辑 [--mode 错题|全部]`
+2. 取一批题：`python "<jiexi>" next <季> 形式逻辑 [--mode 错题|全部]`
    输出里有板块文件路径、本批题号、题干、选项、正确答案、我的答案，以及截图完整路径。有 `[截图]` 的必须打开截图看。
 3. 按本 skill 的方法解这一批题，遵守：
    - **以正确答案为锚**：推导必须落到给出的正确答案；推不出来就写一行 `⚠ 待核对：<卡在哪一步>`，不要硬编；
    - 我答错时，点出我选的选项错在哪。
-4. 按下面「解析写法」把这批解析写进临时文件（如 `<第N季目录>/.jiexi-tmp.md`），每题以 `=== 题号` 开头，然后写入：
-   `python "<jiexi>" write "<第N季目录>" 形式逻辑 "<临时文件>"`
+4. 按下面「解析写法」把这批解析写进 `next` 打印的临时文件（`<第N季目录>/.jiexi-tmp.md`），每题以 `=== 题号` 开头，然后写入（成功后临时文件自动删除）：
+   `python "<jiexi>" write <季> 形式逻辑`
    （脚本会给每行加 `> `，只写空的复盘栏，不会覆盖已有笔记。）
 5. 重复 2–4，直到 `next` 显示“没有待解析的题”。
-6. 检查格式：`python "<jiexi>" check "<第N季目录>" 形式逻辑`，有 ❌ 就按提示修好。
+6. 检查格式：`python "<jiexi>" check <季> 形式逻辑`，有 ❌ 就按提示修好。
 7. 回报一句话：写入了几题、哪些题标了待核对。
 
 ### 省 token 规则
@@ -117,7 +119,7 @@ This skill covers the book content only. For hands-on implementation in your que
 === 101
 【答案】B
 【题型】翻译推理 / 真假推理 / 代入验证 / 一一对应 / 文氏图……
-【符号化】把题干翻译成 ¬、or、and、→（含逆否）
+【符号化】只翻译和正确答案、我的错选有关的条件（¬、or、and、→，含逆否），无关条件不写
 【推理】从事实真或矛盾处出发，一步步推到答案
 【易错】我选 A 错在……（如：逆推、摩根定律用反）（答对可省略）
 ```

@@ -5,12 +5,14 @@ xingce-jiexi-all 的辅助脚本：读写 xingce-mokao-split 生成的板块复�
 所有“哪些题做完了”的判断都直接看复盘栏有没有内容，所以中途断了重跑即可续上。
 
 用法：
-    python jiexi.py status "<第N季目录>"                         # 看进度，并写 解析进度.md
-    python jiexi.py next   "<第N季目录>" <板块> [--mode 错题|全部] [--batch N]
-                                                                # 取下一批待解析的题
-    python jiexi.py write  "<第N季目录>" <板块> "<结果文件>" [--force]
-                                                                # 把解析写回复盘栏
-    python jiexi.py check  "<第N季目录>" [<板块>]               # 检查板块文件格式有没有被改坏
+    python jiexi.py status <季>                                 # 看进度，并写 解析进度.md
+    python jiexi.py next   <季> <板块> [--mode 错题|全部] [--batch N]   # 取下一批待解析的题
+    python jiexi.py write  <季> <板块> [<结果文件>] [--force]  # 把解析写回复盘栏
+    python jiexi.py check  <季> [<板块>]                        # 检查板块文件格式有没有被改坏
+
+<季> 可以写 36、第36季，或第N季目录的完整路径。只写季数时，到库根目录（skills 往上两级，
+即 行测/）下的 FB模考试卷复盘/板块复盘/第N季 找。
+<结果文件> 省略时用 <第N季目录>/.jiexi-tmp.md，写入成功后自动删除。
 
 结果文件格式（每题一段，“=== 题号” 开头，正文不用加 “> ”，脚本会加）：
     === 36
@@ -133,6 +135,26 @@ class Q:
         return self.icon in ("❌", "⚪")
 
 
+VAULT = SKILLS_ROOT.parent.parent  # 行测/copilot/skills -> 行测/
+SEASONS_DIR = VAULT / "FB模考试卷复盘" / "板块复盘"
+TMP_NAME = ".jiexi-tmp.md"
+
+
+def resolve_season(arg: str) -> Path:
+    p = Path(arg).expanduser()
+    if p.is_dir():
+        return p.resolve()
+    m = re.fullmatch(r"(?:第)?(\d+)(?:季)?", arg.strip())
+    if m:
+        cand = SEASONS_DIR / f"第{int(m.group(1))}季"
+        if cand.is_dir():
+            return cand
+        hits = [d for d in VAULT.glob(f"**/板块复盘/第{int(m.group(1))}季") if d.is_dir()]
+        if hits:
+            return hits[0]
+    sys.exit(f"找不到第N季目录：{arg}（按季数查找的位置：{SEASONS_DIR}）")
+
+
 def board_files(season: Path):
     # 01-政治理论.md … 13-资料分析.md；00-第N季总览.md 不算板块
     return [f for f in sorted(season.glob("[0-9][0-9]-*.md")) if not f.name.startswith("00-")]
@@ -244,6 +266,7 @@ def cmd_next(season: Path, board: str, mode=None, batch=None):
     print(f"【{board}】解题skill：{cfg['skill'] or '（未配置）'}　范围：{mode}　"
           f"本批 {len(todo)} 题，本板块还剩 {len(left)} 题")
     print(f"板块文件：{f}")
+    print(f"临时文件：{f.parent / TMP_NAME}（本批解析写到这里，再运行 write）")
     print(f"本批题号：{' '.join(str(q.num) for q in todo)}")
     print(f"截图目录：{att}")
     shown = set()
@@ -263,7 +286,10 @@ def expand(text, att: Path):
 
 
 # ---------------------------------------------------------------- write
-def cmd_write(season: Path, board: str, result: Path, force=False):
+def cmd_write(season: Path, board: str, result: Path = None, force=False):
+    result = result or season / TMP_NAME
+    if not result.is_file():
+        sys.exit(f"找不到结果文件：{result}")
     raw = result.read_text(encoding="utf-8")
     parts = re.split(r"^===\s*(\d+)\s*$", raw, flags=re.M)
     res = {int(parts[i]): parts[i + 1].strip("\n") for i in range(1, len(parts) - 1, 2)}
@@ -288,6 +314,8 @@ def cmd_write(season: Path, board: str, result: Path, force=False):
         lines[q.note + 1:q.end] = body + [""]
         ok.append(num)
     write_lf(f, "\n".join(lines))
+    if result.name == TMP_NAME:
+        result.unlink()
     print(f"已写入 {f.name}：{sorted(ok)}")
     if skipped:
         print(f"⚠ 复盘栏已有内容，未覆盖（确需覆盖加 --force）：{sorted(skipped)}")
@@ -354,19 +382,17 @@ def main():
     p.add_argument("--no-write", action="store_true")
     p = sub.add_parser("next"); p.add_argument("season"); p.add_argument("board")
     p.add_argument("--mode", choices=MODES); p.add_argument("--batch", type=int)
-    p = sub.add_parser("write"); p.add_argument("season"); p.add_argument("board"); p.add_argument("result")
+    p = sub.add_parser("write"); p.add_argument("season"); p.add_argument("board"); p.add_argument("result", nargs="?")
     p.add_argument("--force", action="store_true")
     p = sub.add_parser("check"); p.add_argument("season"); p.add_argument("board", nargs="?")
     a = ap.parse_args()
-    season = Path(a.season).resolve()
-    if not season.is_dir():
-        sys.exit(f"找不到目录：{season}")
+    season = resolve_season(a.season)
     if a.cmd == "status":
         cmd_status(season, not a.no_write)
     elif a.cmd == "next":
         cmd_next(season, a.board, a.mode, a.batch)
     elif a.cmd == "write":
-        cmd_write(season, a.board, Path(a.result), a.force)
+        cmd_write(season, a.board, Path(a.result) if a.result else None, a.force)
     else:
         cmd_check(season, a.board)
 
