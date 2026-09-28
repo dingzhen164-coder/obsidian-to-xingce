@@ -60,12 +60,19 @@ for T in "${TARGETS[@]}"; do
     cp -R "${src}/${s}/." "${T}/${s}/"
     echo "      已安装 ${s}：SKILL.md $([ -f "${T}/${s}/SKILL.md" ] && echo 存在 || echo 缺失)"
   done
+  # 给 book-to-skill 打“行测模式”补丁（原文不改，只插入一节；原文件备份为 SKILL.md.bak）
+  if [ -f "${T}/book-to-skill/SKILL.md" ]; then
+    printf "      "; python3 "${T}/xingce-jiexi-all/scripts/patch_book_to_skill.py" "${T}/book-to-skill"
+  fi
 done
 rm -rf "${tmp}"
 
 echo "[5/5] 完成。检查："
 python3 "${TARGETS[0]}/xingce-jiexi-all/scripts/jiexi.py" -h | head -1
 for T in "${TARGETS[@]}"; do
-  n=0; for s in ${BOARD}; do grep -q "## 被 xingce-jiexi-all 调度时" "${T}/${s}/SKILL.md" 2>/dev/null && n=$((n+1)); done
+  n=0
+  for s in ${BOARD}; do
+    if grep -q "## 被 xingce-jiexi-all 调度时" "${T}/${s}/SKILL.md" 2>/dev/null; then n=$((n+1)); fi
+  done
   echo "      ${T}：${n} 个 skill 已含调度说明（应为 5）"
 done

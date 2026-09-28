@@ -33,6 +33,7 @@ Invoke-WebRequest $Zip -OutFile "$tmp.zip" -UseBasicParsing
 Expand-Archive "$tmp.zip" $tmp -Force
 $src = Join-Path (Get-ChildItem $tmp -Directory)[0].FullName "skills"
 Write-Host "[2/5] downloaded"
+$py = if (Get-Command python -ErrorAction SilentlyContinue) { "python" } elseif (Get-Command py -ErrorAction SilentlyContinue) { "py" } else { $null }
 
 foreach ($T in $Targets) {
   Write-Host "== $T"
@@ -64,10 +65,14 @@ foreach ($T in $Targets) {
     Copy-Item "$src\$s\*" $d -Recurse -Force
     Write-Host "      installed $s : SKILL.md exists = $(Test-Path "$d\SKILL.md")"
   }
+  # patch book-to-skill with the xingce mode section (original kept as SKILL.md.bak)
+  $b2s = Join-Path $T "book-to-skill"
+  if ($py -and (Test-Path "$b2s\SKILL.md")) {
+    & $py (Join-Path $T "xingce-jiexi-all\scripts\patch_book_to_skill.py") $b2s
+  }
 }
 
 Write-Host "[5/5] done. Check:"
-$py = if (Get-Command python -ErrorAction SilentlyContinue) { "python" } elseif (Get-Command py -ErrorAction SilentlyContinue) { "py" } else { $null }
 if ($py) { & $py (Join-Path $Targets[0] "xingce-jiexi-all\scripts\jiexi.py") -h | Select-Object -First 1 }
 else { Write-Host "      Python not found - install it from https://www.python.org/downloads/ (tick 'Add python.exe to PATH')" }
 foreach ($T in $Targets) {
