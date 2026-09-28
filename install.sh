@@ -10,7 +10,9 @@ BOARD="political-theory-reasoning center-comprehension-jiangwei xue-rui-argument
 
 # 1) 找 skills 目录（包含 xue-rui-formal-logic 的那个）
 if [ -z "${SK:-}" ]; then
-  hit=$(find "$HOME/Desktop" "$HOME/Documents" -maxdepth 7 -type d -name xue-rui-formal-logic 2>/dev/null | head -1 || true)
+  # 优先库根目录 行测/ 下的 copilot/skills；跳过 copilot.old 之类的旧目录
+  hit=$(find "$HOME/Desktop" "$HOME/Documents" -maxdepth 7 -type d -name xue-rui-formal-logic 2>/dev/null \
+        | grep -v '\.old' | awk '{print (index($0, "/行测/copilot/skills/") ? 0 : 1) "\t" $0}' | sort | cut -f2- | head -1 || true)
   [ -n "$hit" ] || { echo "找不到 skills 目录，请这样运行：... | SK=\"<skills目录>\" bash"; exit 1; }
   SK=$(dirname "$hit")
 fi

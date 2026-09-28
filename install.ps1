@@ -13,7 +13,8 @@ $BoardSkills = "political-theory-reasoning","center-comprehension-jiangwei","xue
 # 1) find the skills folder (the one containing xue-rui-formal-logic)
 if (-not $SK) {
   $hit = Get-ChildItem "$env:USERPROFILE\Desktop","$env:USERPROFILE\Documents" -Recurse -Directory -Depth 6 `
-           -Filter "xue-rui-formal-logic" -ErrorAction SilentlyContinue | Select-Object -First 1
+           -Filter "xue-rui-formal-logic" -ErrorAction SilentlyContinue |
+         Where-Object { $_.FullName -notmatch '\.old' } | Select-Object -First 1
   if (-not $hit) { throw "skills folder not found. Run:  `$SK = '<your skills folder>'  first, then rerun." }
   $SK = $hit.Parent.FullName
 }

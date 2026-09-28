@@ -20,7 +20,7 @@ metadata:
 
 每次处理本 Project 的核心题目时，必须先实际读取：
 
-Obsidian 库里的 `行测/政治理论/00-三层级做题总框架.md`
+Obsidian 库（根目录为 `行测obsidian/行测/`）里的 `政治理论/00-三层级做题总框架.md`
 
 即本 skill 文件夹往上三级（`行测/copilot/skills/本skill` → `行测/`）下的 `政治理论/00-三层级做题总框架.md`。两台电脑上的完整路径：
 - Windows：`C:\Users\29356\Desktop\行测obsidian\行测\政治理论\00-三层级做题总框架.md`
