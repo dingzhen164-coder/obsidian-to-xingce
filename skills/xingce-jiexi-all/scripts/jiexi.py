@@ -10,6 +10,7 @@ xingce-jiexi-all 的辅助脚本：读写 xingce-mokao-split 生成的板块复�
                                                                 # 取下一批待解析的题
     python jiexi.py write  "<第N季目录>" <板块> "<结果文件>" [--force]
                                                                 # 把解析写回复盘栏
+    python jiexi.py check  "<第N季目录>" [<板块>]               # 检查板块文件格式有没有被改坏
 
 结果文件格式（每题一段，“=== 题号” 开头，正文不用加 “> ”，脚本会加）：
     === 36
@@ -39,6 +40,12 @@ NOTE = "> [!note] 复盘"
 CHECK = "> [!check]"
 PENDING_MARK = "⚠ 待核对"
 MODES = ("错题", "全部")
+DEFAULT_CFG = {"skill": "", "mode": "错题", "batch": 5, "ready": False}
+SKILLS_ROOT = SKILL_DIR.parent  # 板块 skill 和本 skill 放在同一个 skills/ 目录下
+
+
+def skill_exists(name):
+    return bool(name) and (SKILLS_ROOT / name / "SKILL.md").is_file()
 
 
 # ---------------------------------------------------------------- 映射表
@@ -54,7 +61,7 @@ def load_mapping():
         skill = "" if cells[1] in ("", "-", "—") else cells[1]
         mode = cells[2] if cells[2] in MODES else "错题"
         batch = int(cells[3]) if cells[3].isdigit() else 5
-        m[cells[0]] = {"skill": skill, "mode": mode, "batch": batch}
+        m[cells[0]] = {"skill": skill, "mode": mode, "batch": batch, "ready": skill_exists(skill)}
     return m
 
 
@@ -141,7 +148,7 @@ def cmd_status(season: Path, write=True):
     rows, flagged_all = [], []
     for f in sorted(season.glob("[0-9][0-9]-*.md")):
         board = f.stem.split("-", 1)[1]
-        cfg = mp.get(board, {"skill": "", "mode": "错题", "batch": 5})
+        cfg = mp.get(board, DEFAULT_CFG)
         lines, qs, _ = parse_board(f.read_text(encoding="utf-8"))
         tg = targets(qs, cfg["mode"])
         done = [q for q in tg if q.filled(lines)]
@@ -149,7 +156,9 @@ def cmd_status(season: Path, write=True):
         flagged_all += [(board, n) for n in flagged]
         left = [q.num for q in tg if not q.filled(lines)]
         if not cfg["skill"]:
-            state = "跳过（无解题skill）"
+            state = "跳过（未指定解题skill）"
+        elif not cfg["ready"]:
+            state = f"跳过（{cfg['skill']} 尚未创建）"
         elif not left:
             state = "✅ 完成"
         elif done:
@@ -163,7 +172,8 @@ def cmd_status(season: Path, write=True):
            "| --- | --- | :-: | :-: | :-: | :-: | :-: | --- |"]
     for stem, sk, mode, n, t, d, fl, left, st in rows:
         out.append(f"| [[{stem}]] | {sk} | {mode} | {n} | {t} | {d} | {fl} | {st} |")
-    pend = [(r[0], r[7]) for r in rows if r[1] != "-" and r[7]]
+    ready = {k for k, v in mp.items() if v["ready"]}
+    pend = [(r[0], r[7]) for r in rows if r[0].split("-", 1)[1] in ready and r[7]]
     if pend:
         out += ["", "## 未完成的题", ""] + [f"- {s}：{', '.join(map(str, l))}" for s, l in pend]
     if flagged_all:
@@ -176,7 +186,7 @@ def cmd_status(season: Path, write=True):
 
 # ---------------------------------------------------------------- next
 def cmd_next(season: Path, board: str, mode=None, batch=None):
-    cfg = load_mapping().get(board, {"skill": "", "mode": "错题", "batch": 5})
+    cfg = load_mapping().get(board, DEFAULT_CFG)
     mode = mode or cfg["mode"]
     batch = batch or cfg["batch"]
     f = board_file(season, board)
@@ -189,6 +199,8 @@ def cmd_next(season: Path, board: str, mode=None, batch=None):
     att = f.parent / "attachments"
     print(f"【{board}】解题skill：{cfg['skill'] or '（未配置）'}　范围：{mode}　"
           f"本批 {len(todo)} 题，本板块还剩 {len(left)} 题")
+    print(f"板块文件：{f}")
+    print(f"本批题号：{' '.join(str(q.num) for q in todo)}")
     print(f"截图目录：{att}")
     shown = set()
     for q in todo:
@@ -236,6 +248,58 @@ def cmd_write(season: Path, board: str, result: Path, force=False):
         print(f"⚠ 板块里没有这些题号：{sorted(missing)}")
 
 
+# ---------------------------------------------------------------- check
+TABLE_RE = re.compile(r"^\| \[\[#(\d+)\. ")
+
+
+def check_board(f: Path):
+    """返回问题列表；空列表表示格式正常"""
+    text = f.read_text(encoding="utf-8")
+    lines, qs, _ = parse_board(text)
+    probs = []
+    if not text.startswith("---\n"):
+        probs.append("frontmatter 丢失")
+    heads = [q.num for q in qs]
+    dup = sorted({n for n in heads if heads.count(n) > 1})
+    if dup:
+        probs.append(f"题号重复：{dup}")
+    table = [int(m.group(1)) for m in map(TABLE_RE.match, lines) if m]
+    if table and sorted(set(table)) != sorted(set(heads)):
+        lost = sorted(set(table) - set(heads))
+        extra = sorted(set(heads) - set(table))
+        probs.append(f"题目与速览表对不上：缺 {lost} 多 {extra}")
+    for q in qs:
+        where = f"第{q.num}题"
+        if q.end >= len(lines):
+            probs.append(f"{where}：结尾的 --- 分隔线丢失"); continue
+        if not q.correct:
+            probs.append(f"{where}：答案行丢失或被改动")
+        if q.note < 0:
+            probs.append(f"{where}：“> [!note] 复盘” 行丢失"); continue
+        bad = [i + 1 for i in range(q.note + 1, q.end) if lines[i].strip() and not lines[i].startswith(">")]
+        if bad:
+            probs.append(f"{where}：复盘栏第 {bad} 行没有以 “> ” 开头，会跑出 callout")
+        inner_blank = [i + 1 for i, l in enumerate(q.analysis(lines), q.note + 1) if not l.strip()]
+        if inner_blank:
+            probs.append(f"{where}：复盘栏中间有空行（第 {inner_blank} 行），callout 会被截断，空行要写成 “>”")
+    return probs
+
+
+def cmd_check(season: Path, board=None):
+    files = [board_file(season, board)] if board else sorted(season.glob("[0-9][0-9]-*.md"))
+    bad = 0
+    for f in files:
+        probs = check_board(f)
+        if probs:
+            bad += 1
+            print(f"❌ {f.name}")
+            for p in probs:
+                print(f"   - {p}")
+        else:
+            print(f"✅ {f.name}")
+    sys.exit(1 if bad else 0)
+
+
 def main():
     ap = argparse.ArgumentParser()
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -245,6 +309,7 @@ def main():
     p.add_argument("--mode", choices=MODES); p.add_argument("--batch", type=int)
     p = sub.add_parser("write"); p.add_argument("season"); p.add_argument("board"); p.add_argument("result")
     p.add_argument("--force", action="store_true")
+    p = sub.add_parser("check"); p.add_argument("season"); p.add_argument("board", nargs="?")
     a = ap.parse_args()
     season = Path(a.season).resolve()
     if not season.is_dir():
@@ -253,8 +318,10 @@ def main():
         cmd_status(season, not a.no_write)
     elif a.cmd == "next":
         cmd_next(season, a.board, a.mode, a.batch)
-    else:
+    elif a.cmd == "write":
         cmd_write(season, a.board, Path(a.result), a.force)
+    else:
+        cmd_check(season, a.board)
 
 
 if __name__ == "__main__":
