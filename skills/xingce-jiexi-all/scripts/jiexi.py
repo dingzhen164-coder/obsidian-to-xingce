@@ -9,6 +9,7 @@ xingce-jiexi-all 的辅助脚本：读写 xingce-mokao-split 生成的板块复�
     python jiexi.py next   <季> <板块> [--mode 错题|全部] [--batch N]   # 取下一批待解析的题
     python jiexi.py write  <季> <板块> [<结果文件>] [--force]  # 把解析写回复盘栏
     python jiexi.py check  <季> [<板块>]                        # 检查板块文件格式有没有被改坏
+    python jiexi.py reset  <季> <板块> [<题号>…]               # 清掉解析以便重做（保留“- 错因：”等模板行）
 
 <季> 可以写 36、第36季，或第N季目录的完整路径。只写季数时，到库根目录（skills 往上两级，
 即 行测/）下的 FB模考试卷复盘/板块复盘/第N季 找。
@@ -335,6 +336,27 @@ def cmd_write(season: Path, board: str, result: Path = None, force=False):
         print(f"⚠ 板块里没有这些题号：{sorted(missing)}")
 
 
+# ---------------------------------------------------------------- reset
+TEMPLATE_LINE_RE = re.compile(r"^>\s*[-*]\s*[^：:>]{1,12}[：:]")  # “> - 错因：…” 模板行（填没填都保留）
+
+
+def cmd_reset(season: Path, board: str, nums=None):
+    f = board_file(season, board)
+    lines, qs, _ = parse_board(f.read_text(encoding="utf-8"))
+    want = set(nums or [])
+    done = []
+    for q in sorted(qs, key=lambda q: q.start, reverse=True):
+        if want and q.num not in want:
+            continue
+        if q.note < 0 or not q.filled(lines):
+            continue
+        keep = [l for l in q.analysis(lines) if TEMPLATE_LINE_RE.match(l.strip())]
+        lines[q.note + 1:q.end] = (keep or [">"]) + [""]
+        done.append(q.num)
+    write_lf(f, "\n".join(lines))
+    print(f"已清空 {f.name} 的解析：{sorted(done) or '无'}（模板行已保留）")
+
+
 # ---------------------------------------------------------------- check
 TABLE_RE = re.compile(r"^\| \[\[#(\d+)\. ")
 
@@ -397,6 +419,8 @@ def main():
     p = sub.add_parser("write"); p.add_argument("season"); p.add_argument("board"); p.add_argument("result", nargs="?")
     p.add_argument("--force", action="store_true")
     p = sub.add_parser("check"); p.add_argument("season"); p.add_argument("board", nargs="?")
+    p = sub.add_parser("reset"); p.add_argument("season"); p.add_argument("board")
+    p.add_argument("nums", nargs="*", type=int)
     a = ap.parse_args()
     season = resolve_season(a.season)
     if getattr(a, "board", None):
@@ -405,6 +429,8 @@ def main():
         cmd_status(season, not a.no_write)
     elif a.cmd == "next":
         cmd_next(season, a.board, a.mode, a.batch)
+    elif a.cmd == "reset":
+        cmd_reset(season, a.board, a.nums)
     elif a.cmd == "write":
         cmd_write(season, a.board, Path(a.result) if a.result else None, a.force)
     else:
