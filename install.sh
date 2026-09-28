@@ -37,10 +37,17 @@ echo "[2/5] 已下载"
 for T in "${TARGETS[@]}"; do
   echo "== ${T}"
   # 3) 中心理解文件夹改名，和 name: 一致
-  if [ -d "${T}/center-comprehension-booktoskill" ] && [ ! -d "${T}/center-comprehension-jiangwei" ]; then
-    mv "${T}/center-comprehension-booktoskill" "${T}/center-comprehension-jiangwei"
+  OLD="${T}/center-comprehension-booktoskill"; NEW="${T}/center-comprehension-jiangwei"
+  if [ -d "${OLD}" ] && [ ! -d "${NEW}" ]; then
+    mv "${OLD}" "${NEW}"
+  elif [ -d "${OLD}" ] && [ -d "${NEW}" ]; then
+    # 新旧两份并存：把旧文件夹里新文件夹缺的文件（章节等）补过去，再把旧文件夹移出 skills 目录
+    cp -R -n "${OLD}/." "${NEW}/"
+    BK="$(dirname "${T}")/skills-backup"; mkdir -p "${BK}"
+    mv "${OLD}" "${BK}/center-comprehension-booktoskill-$(date +%Y%m%d%H%M%S)"
+    echo "      已合并旧文件夹 center-comprehension-booktoskill → jiangwei，旧文件夹移到 ${BK}"
   fi
-  echo "[3/5] 中心理解文件夹：$([ -d "${T}/center-comprehension-jiangwei" ] && echo 正常 || echo 缺失)"
+  echo "[3/5] 中心理解文件夹：$([ -d "${NEW}" ] && echo 正常 || echo 缺失)；章节文件 $(ls "${NEW}/chapters" 2>/dev/null | wc -l | tr -d ' ') 个"
 
   # 4) 替换 5 个板块 SKILL.md（第一次运行时备份原文件为 SKILL.md.bak）
   for s in ${BOARD}; do
@@ -66,6 +73,16 @@ for T in "${TARGETS[@]}"; do
   fi
 done
 rm -rf "${tmp}"
+
+# .opencode/skills 里的板块 skill 常常只有 SKILL.md：把 copilot/skills 里有、它缺的文件（章节、cheatsheet 等）补过去，不覆盖已有文件
+if [ -d "${VAULT}/copilot/skills" ] && [ -d "${VAULT}/.opencode/skills" ]; then
+  for s in ${BOARD}; do
+    if [ -d "${VAULT}/copilot/skills/${s}" ] && [ -d "${VAULT}/.opencode/skills/${s}" ]; then
+      cp -R -n "${VAULT}/copilot/skills/${s}/." "${VAULT}/.opencode/skills/${s}/" 2>/dev/null || true
+    fi
+  done
+  echo "      已把章节等配套文件补到 .opencode/skills"
+fi
 
 echo "[5/5] 完成。检查："
 python3 "${TARGETS[0]}/xingce-jiexi-all/scripts/jiexi.py" -h | head -1

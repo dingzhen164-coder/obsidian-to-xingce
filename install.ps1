@@ -40,8 +40,18 @@ foreach ($T in $Targets) {
   # 3) rename center-comprehension folder so it matches its name: field
   $old = Join-Path $T "center-comprehension-booktoskill"
   $new = Join-Path $T "center-comprehension-jiangwei"
-  if ((Test-Path $old) -and -not (Test-Path $new)) { Rename-Item $old "center-comprehension-jiangwei" }
-  Write-Host "[3/5] center-comprehension folder ok: $(Test-Path $new)"
+  if ((Test-Path $old) -and -not (Test-Path $new)) {
+    Rename-Item $old "center-comprehension-jiangwei"
+  } elseif ((Test-Path $old) -and (Test-Path $new)) {
+    # both exist: copy files missing in the new folder (chapters etc.), then move the old folder out of skills
+    robocopy $old $new /E /XC /XN /XO /NFL /NDL /NJH /NJS /NP | Out-Null
+    $bk = Join-Path (Split-Path $T -Parent) "skills-backup"
+    New-Item $bk -ItemType Directory -Force | Out-Null
+    Move-Item $old (Join-Path $bk ("center-comprehension-booktoskill-" + (Get-Date -Format yyyyMMddHHmmss)))
+    Write-Host "      merged old center-comprehension-booktoskill into jiangwei; old folder moved to $bk"
+  }
+  $nch = @(Get-ChildItem (Join-Path $new "chapters") -File -ErrorAction SilentlyContinue).Count
+  Write-Host "[3/5] center-comprehension folder ok: $(Test-Path $new) ; chapter files: $nch"
 
   # 4) replace the 5 board SKILL.md (original kept once as SKILL.md.bak)
   foreach ($s in $BoardSkills) {
@@ -72,6 +82,16 @@ foreach ($T in $Targets) {
   }
 }
 
+# .opencode\skills board skills often only have SKILL.md: copy files missing there (chapters, cheatsheet...) from copilot\skills, never overwrite
+$cs = Join-Path $Vault "copilot\skills"; $os = Join-Path $Vault ".opencode\skills"
+if ((Test-Path $cs) -and (Test-Path $os)) {
+  foreach ($s in $BoardSkills) {
+    if ((Test-Path (Join-Path $cs $s)) -and (Test-Path (Join-Path $os $s))) {
+      robocopy (Join-Path $cs $s) (Join-Path $os $s) /E /XC /XN /XO /NFL /NDL /NJH /NJS /NP | Out-Null
+    }
+  }
+  Write-Host "      copied missing chapter files into .opencode\skills"
+}
 Write-Host "[5/5] done. Check:"
 if ($py) { & $py (Join-Path $Targets[0] "xingce-jiexi-all\scripts\jiexi.py") -h | Select-Object -First 1 }
 else { Write-Host "      Python not found - install it from https://www.python.org/downloads/ (tick 'Add python.exe to PATH')" }
