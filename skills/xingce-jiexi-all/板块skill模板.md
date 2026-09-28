@@ -1,8 +1,8 @@
 # 板块解题 skill 接入指南
 
-## 一、已有的板块 skill：追加一段即可
+## 一、已有的 5 个板块 skill：已经接好
 
-`political-theory-reasoning`、`center-comprehension-booktoskill`、`xue-rui-argument-logic`、`xue-rui-formal-logic`、`xue-rui-yituowu` 这几个已有的 skill，**不用改名、不用改原来的解题方法**，只要把下面「被 xingce-jiexi-all 调度时」这一整节复制到各自 `SKILL.md` 的末尾。
+`political-theory-reasoning`、`center-comprehension-jiangwei`、`xue-rui-argument-logic`、`xue-rui-formal-logic`、`xue-rui-yituowu` 已经在仓库 `skills/` 下各自的 `SKILL.md` 末尾加好了「被 xingce-jiexi-all 调度时」一节（按各自题型定制了解析写法和省 token 规则），原来的解题方法没动。用仓库里的 `SKILL.md` 替换你库里对应的文件即可（章节、cheatsheet 等其它文件不用动）。
 
 以后改解题方法时，只改原来的部分，这一节保持不动。
 

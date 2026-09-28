@@ -44,8 +44,29 @@ DEFAULT_CFG = {"skill": "", "mode": "错题", "batch": 5, "ready": False}
 SKILLS_ROOT = SKILL_DIR.parent  # 板块 skill 和本 skill 放在同一个 skills/ 目录下
 
 
-def skill_exists(name):
-    return bool(name) and (SKILLS_ROOT / name / "SKILL.md").is_file()
+_SKILL_INDEX = None
+
+
+def skill_index():
+    """skills/ 下所有 skill：文件夹名和 SKILL.md 里的 name: 都算"""
+    global _SKILL_INDEX
+    if _SKILL_INDEX is None:
+        _SKILL_INDEX = set()
+        for f in SKILLS_ROOT.glob("*/SKILL.md"):
+            _SKILL_INDEX.add(f.parent.name)
+            m = re.search(r"^name:\s*[\"']?([^\"'\n]+?)[\"']?\s*$", f.read_text(encoding="utf-8", errors="ignore"), re.M)
+            if m:
+                _SKILL_INDEX.add(m.group(1))
+    return _SKILL_INDEX
+
+
+def resolve_skill(cell):
+    """映射表里可写多个候选（逗号分隔），用第一个已存在的；都不存在就返回第一个名字"""
+    names = [n.strip() for n in re.split(r"[,，]", cell) if n.strip() not in ("", "-", "—")]
+    for n in names:
+        if n in skill_index():
+            return n, True
+    return (names[0] if names else ""), False
 
 
 # ---------------------------------------------------------------- 映射表
@@ -58,10 +79,10 @@ def load_mapping():
         cells = [c.strip() for c in ln.strip().strip("|").split("|")]
         if len(cells) < 4 or cells[0] in ("板块", "") or set(cells[0]) <= set("-: "):
             continue
-        skill = "" if cells[1] in ("", "-", "—") else cells[1]
+        skill, ready = resolve_skill(cells[1])
         mode = cells[2] if cells[2] in MODES else "错题"
         batch = int(cells[3]) if cells[3].isdigit() else 5
-        m[cells[0]] = {"skill": skill, "mode": mode, "batch": batch, "ready": skill_exists(skill)}
+        m[cells[0]] = {"skill": skill, "mode": mode, "batch": batch, "ready": ready}
     return m
 
 
