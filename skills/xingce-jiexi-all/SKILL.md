@@ -1,6 +1,8 @@
 ---
 name: xingce-jiexi-all
 description: 行测模考一键生成解析的总调度 skill——读取 xingce-mokao-split 拆好的“第N季”板块复盘文件，按“板块映射.md”自动找到每个板块的解题 skill，逐板块派给它把解析直接写进每道题的“复盘”栏，支持只做错题、指定板块、断点续跑。用户说“给第36季生成解析/写解析/填复盘”“把错题都解析一下”“继续上次的解析”时使用。只解析单个板块且用户点名了某个解题 skill 时，直接用那个 skill 即可。
+metadata:
+  copilot-enabled-agents: opencode
 ---
 
 # 行测模考 · 一键解析（总调度）
@@ -11,7 +13,7 @@ description: 行测模考一键生成解析的总调度 skill——读取 xingce
 - 哪个板块用哪个 skill：在 `板块映射.md` 里（13 个名字已定好，新 skill 照名字建好就会被自动发现）；
 - 读写板块 md 的固定操作：在 `scripts/jiexi.py` 里。
 
-下文 `<jiexi>` 指本 skill 目录下的 `scripts/jiexi.py`。路径含中文和括号，一律加英文双引号；Windows 上 `python` 不可用时换 `py`。
+下文 `<jiexi>` 指本 skill 目录下的 `scripts/jiexi.py`。路径含中文和括号，一律加英文双引号；命令里的 `python`：Windows 用 `python`（不行换 `py`），Mac 用 `python3`。
 
 ## 一、确认任务
 

@@ -22,7 +22,11 @@ metadata:
 
 Obsidian 库里的 `行测/政治理论/00-三层级做题总框架.md`
 
-（本机完整路径：`C:\Users\29356\Desktop\行测obsidian\行测\政治理论\00-三层级做题总框架.md`。换电脑或换系统时，按库内相对路径找。）
+即本 skill 文件夹往上三级（`行测/copilot/skills/本skill` → `行测/`）下的 `政治理论/00-三层级做题总框架.md`。两台电脑上的完整路径：
+- Windows：`C:\Users\29356\Desktop\行测obsidian\行测\政治理论\00-三层级做题总框架.md`
+- Mac：`/Users/gasby/Desktop/行测obsidian/行测/政治理论/00-三层级做题总框架.md`
+
+先按相对位置找；找不到再试当前系统对应的完整路径。
 
 必须优先遵守其中原有的：
 - 层级划分
@@ -121,7 +125,7 @@ Obsidian 库里的 `行测/政治理论/00-三层级做题总框架.md`
 
 被总调度 skill 派来处理某一季的政治理论板块时，按下面流程**直接把解析写进板块 md 文件**，不在对话里输出长篇解析。
 
-`<jiexi>` 指 `xingce-jiexi-all/scripts/jiexi.py`（和本 skill 在同一个 skills 目录下）。路径一律加英文双引号；Windows 上 `python` 不可用就换 `py`。
+`<jiexi>` 指 `xingce-jiexi-all/scripts/jiexi.py`（和本 skill 在同一个 skills 目录下）。路径一律加英文双引号；命令里的 `python`：Windows 用 `python`（不行换 `py`），Mac 用 `python3`。
 
 ### 流程
 

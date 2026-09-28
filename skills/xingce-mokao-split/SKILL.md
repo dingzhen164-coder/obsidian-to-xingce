@@ -1,6 +1,8 @@
 ---
 name: xingce-mokao-split
 description: 把粉笔（Fb）行测模考试卷 PDF 按板块拆分成 Obsidian Markdown 复盘笔记——政治理论、常识判断、逻辑填空、中心理解、语句排序、数量关系、图形推理、定义判断、类比关系、论证逻辑、形式逻辑、一拖五、资料分析，每题带题干、选项、正确答案、我的答案和复盘栏，图形/公式/图表题自动截图。只要用户提到模考试卷、行测试卷 PDF、板块复盘、按题型拆分、把试卷转成 md，或把一份行测 PDF 放进“模考试卷”文件夹，就使用这个 skill。
+metadata:
+  copilot-enabled-agents: opencode
 ---
 
 # 行测模考试卷 → 板块复盘笔记
@@ -27,7 +29,7 @@ description: 把粉笔（Fb）行测模考试卷 PDF 按板块拆分成 Obsidian
    ```
    python -c "import pymupdf"
    ```
-   报错就执行 `pip install pymupdf`。Windows 上 `python` 不可用时换成 `py`。
+   报错就执行 `pip install pymupdf`（Mac 用 `pip3`）。命令里的 `python`：Windows 用 `python`（不行换 `py`），Mac 用 `python3`。
 
 3. **运行脚本**（路径含中文和括号，必须加英文双引号）：
    ```

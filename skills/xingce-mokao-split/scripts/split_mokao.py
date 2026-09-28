@@ -24,6 +24,19 @@ except ImportError:
     except ImportError:
         sys.exit("缺少依赖：请先运行  pip install pymupdf")
 
+for _s in (sys.stdout, sys.stderr):
+    try:  # Windows 下输出被 agent 捕获时默认是 GBK，打印 ✅ ⚠ 会报错
+        _s.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
+
+
+def write_lf(path, text):
+    # 统一用 LF 换行：Windows / Mac 通过坚果云同步时，文件不会因换行符不同而整份变动
+    with open(path, "w", encoding="utf-8", newline="\n") as fp:
+        fp.write(text)
+
+
 # ---------------------------------------------------------------- 配置
 BOARDS = [  # (文件名序号, 板块名)
     ("01", "政治理论"), ("02", "常识判断"), ("03", "逻辑填空"), ("04", "中心理解"),
@@ -431,7 +444,7 @@ def main():
                     body += ["> " + ln if ln else ">" for ln in m.text.split("\n")]
                 body.append("")
             body += render_question(q, q._stem)
-        fn.write_text("\n".join(body), encoding="utf-8")
+        write_lf(fn, "\n".join(body))
         written.append(fn.name)
 
     # 总览
@@ -441,7 +454,7 @@ def main():
              f"# {season} 模考总览", "", "| 板块 | 题数 | 作答 | 正确 | 正确率 |", "| --- | :-: | :-: | :-: | :-: |"]
         for idx, b, n, d, r, rate in overview:
             t.append(f"| [[{idx}-{b}]] | {n} | {d} | {r} | {rate} |")
-        ov.write_text("\n".join(t) + "\n", encoding="utf-8")
+        write_lf(ov, "\n".join(t) + "\n")
         written.append(ov.name)
 
     # 控制台报告（供 agent 核对分类）

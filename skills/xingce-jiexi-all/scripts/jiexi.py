@@ -27,9 +27,15 @@ from pathlib import Path
 
 for s in (sys.stdout, sys.stderr):
     try:
-        s.reconfigure(encoding="utf-8")
+        s.reconfigure(encoding="utf-8", errors="replace")
     except Exception:
         pass
+
+def write_lf(path, text):
+    # 统一用 LF 换行：Windows / Mac 通过坚果云同步时，文件不会因换行符不同而整份变动
+    with open(path, "w", encoding="utf-8", newline="\n") as fp:
+        fp.write(text)
+
 
 SKILL_DIR = Path(__file__).resolve().parent.parent
 MAP_FILE = SKILL_DIR / "板块映射.md"
@@ -201,7 +207,7 @@ def cmd_status(season: Path, write=True):
         out += ["", "## ⚠ 待核对", ""] + [f"- {b} 第{n}题" for b, n in flagged_all]
     text = "\n".join(out) + "\n"
     if write:
-        (season / "解析进度.md").write_text(text, encoding="utf-8")
+        write_lf(season / "解析进度.md", text)
     print(text)
 
 
@@ -261,7 +267,7 @@ def cmd_write(season: Path, board: str, result: Path, force=False):
         body = [(l if l.startswith(">") else ("> " + l if l.strip() else ">")) for l in body]
         lines[q.note + 1:q.end] = body + [""]
         ok.append(num)
-    f.write_text("\n".join(lines), encoding="utf-8")
+    write_lf(f, "\n".join(lines))
     print(f"已写入 {f.name}：{sorted(ok)}")
     if skipped:
         print(f"⚠ 复盘栏已有内容，未覆盖（确需覆盖加 --force）：{sorted(skipped)}")

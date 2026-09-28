@@ -37,7 +37,7 @@ description: 行测<板块名>题的解题方法与解析写法。用户让解�
 
 被总调度 skill 派来处理某一季的本板块时，按下面流程**直接把解析写进板块 md 文件**，不在对话里输出长篇解析。
 
-`<jiexi>` 指 `xingce-jiexi-all/scripts/jiexi.py`（和本 skill 在同一个 skills 目录下）。路径一律加英文双引号；Windows 上 `python` 不可用就换 `py`。
+`<jiexi>` 指 `xingce-jiexi-all/scripts/jiexi.py`（和本 skill 在同一个 skills 目录下）。路径一律加英文双引号；命令里的 `python`：Windows 用 `python`（不行换 `py`），Mac 用 `python3`。
 
 1. 取一批题：`python "<jiexi>" next "<第N季目录>" <板块名> [--mode 错题|全部]`
    输出里有板块文件路径、本批题号、题干、选项、正确答案、我的答案，以及截图完整路径。有 `[截图]` 的必须打开截图看。
