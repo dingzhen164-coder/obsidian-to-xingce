@@ -142,7 +142,14 @@ def main():
         avg = sum(ch_tk) // len(ch_tk)
         info.append(f"章节 {len(chs)} 个，平均约 {avg} token，最大 {max(ch_tk)}")
         if big_ch: warn.append(f"章节过大（> {CHAPTER_MAX}）：{', '.join(big_ch[:6])}")
-        if no_ex: bad.append(f"没有「典型例题」的章节：{len(no_ex)}/{len(chs)}（{', '.join(no_ex[:5])}…）→ AI 缺少同类题示范")
+        overview = re.compile(r"概述|总纲|导学|导论|introduction|overview|intro", re.I)
+        ov = [n for n in no_ex if overview.search(n)]
+        real = [n for n in no_ex if n not in ov]
+        if ov:
+            info.append(f"概述类章节没有例题（正常）：{', '.join(ov)}")
+        if real:
+            msg = f"没有「典型例题」的题型章节：{len(real)}/{len(chs)}（{', '.join(real[:5])}）→ AI 缺少同类题示范"
+            (bad if len(real) * 3 >= len(chs) else warn).append(msg)
         if few_ex: warn.append(f"例题少于 2 道：{', '.join(few_ex[:6])}")
         if no_ans: warn.append(f"例题没写答案：{', '.join(no_ans[:6])}")
         if eng_ch: warn.append(f"章节里还有英文标题：{len(eng_ch)} 个（{', '.join(eng_ch[:4])}…）")
