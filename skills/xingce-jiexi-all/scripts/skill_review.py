@@ -155,8 +155,10 @@ def main():
     cs_tk = 0
     if cs.is_file():
         ct = cs.read_text(encoding="utf-8", errors="ignore"); cs_tk = tokens(ct)
-        parts = [("题型识别", "题型识别表"), ("步骤", "每类题的解题步骤"), ("陷阱", "选项陷阱清单")]
-        miss = [label for kw, label in parts if kw not in ct]
+        parts = [(("题型识别", "识别表"), "题型识别表"),
+                 (("步骤", "下手", "怎么做", "流程", "解法", "SOP"), "每类题的解题步骤"),
+                 (("陷阱", "干扰项", "易错"), "选项陷阱清单")]
+        miss = [label for kws, label in parts if not any(k in ct for k in kws)]
         (warn if miss else ok).append("cheatsheet " + (f"缺：{'、'.join(miss)}" if miss else "三部分齐全") + f"（约 {cs_tk} token）")
         if cs_tk > CHEATSHEET_MAX:
             warn.append(f"cheatsheet 约 {cs_tk} token，偏大（建议 ≤ {CHEATSHEET_MAX}，它是“整个板块读一次”的速查）")
