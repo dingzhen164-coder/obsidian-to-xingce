@@ -84,6 +84,14 @@ When you ask about a topic not covered in Core Frameworks below, I will read the
 
 This skill covers the book content only. For hands-on implementation in your question-solving workflows, combine with project-specific assessment templates.
 
+## 单独答题时（不经过 xingce-jiexi-all）
+
+用户在对话里直接问一道题时：
+- **用户给了正确答案**：以答案为锚，按本 skill 的「解题步骤」和「解析写法」讲，**不要联网**。
+- **没给答案**：先按本 skill 的方法**独立作答**，写出理由和把握程度（有把握 / 两项之间犹豫，并说明在哪两项之间）。
+- **默认不联网搜答案**。只有用户要求核对时才搜，**最多搜 1 次**；来源互相矛盾就停止搜索，给出自己的判断并注明"来源不一致"。每读一个网页都要花大量 token。
+- 输出照样用「解析写法」的格式。
+
 ---
 
 ## 被 xingce-jiexi-all 调度时

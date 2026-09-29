@@ -131,6 +131,9 @@ metadata:
 ## 配套文件
 cheatsheet.md（先读这个）· patterns.md · glossary.md
 
+## 单独答题时（不经过 xingce-jiexi-all）
+<照抄 ../xingce-jiexi-all/board-skill-template.md 代码块里「## 单独答题时」这一整节>
+
 ## 被 xingce-jiexi-all 调度时
 <照抄 ../xingce-jiexi-all/board-skill-template.md 代码块里「## 被 xingce-jiexi-all 调度时」这一整节，把 <板块名> 换成本板块>
 ```
