@@ -57,7 +57,7 @@ for T in "${TARGETS[@]}"; do
   # 5) 安装 / 更新 总调度 和 拆卷 skill
   # 旧版本里的中文文件名（已改名为 board-map.md / board-skill-template.md）
   rm -f "${T}/xingce-jiexi-all/板块映射.md" "${T}/xingce-jiexi-all/板块skill模板.md"
-  for s in xingce-jiexi-all xingce-mokao-split xingce-changshi; do
+  for s in xingce-jiexi-all xingce-mokao-split xingce-changshi xingce-shuliang; do
     mkdir -p "${T}/${s}"
     cp -R "${src}/${s}/." "${T}/${s}/"
     echo "      已安装 ${s}：SKILL.md $([ -f "${T}/${s}/SKILL.md" ] && echo 存在 || echo 缺失)"
