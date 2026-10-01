@@ -209,6 +209,34 @@ def split_options(text, scrambled):
 
 
 # ---------------------------------------------------------------- 分类
+VERBAL_FILL = re.compile(r"依次填入|填入(画)?横线|横线(处|部分)")
+VERBAL_READ = re.compile(r"这段文字|这段话|文段|意在|旨在|主要说明|主要介绍|重新排列|语序正确|排序正确|最恰当的标题|"
+                         r"作为标题|接下来最可能|下文最可能|语句填入|填入文中")
+SEQ_ONLY = re.compile(r"^[\s①-⑨\d、，,]+$")
+
+
+def verbal_board(stem, opts):
+    """言语理解：逻辑填空（选词填空）还是片段阅读（主旨、意图、标题、排序、语句填入）；认不出返回空"""
+    if VERBAL_FILL.search(stem):
+        short = opts and all(len(re.sub(r"[\s\W_]+", "", v)) <= 12 for v in opts.values())
+        return "逻辑填空" if "依次填入" in stem or short else "片段阅读"
+    if VERBAL_READ.search(stem):
+        return "片段阅读"
+    return ""
+
+
+def verbal_by_options(opts):
+    """言语类练习册里问法认不出时：选项是一串序号（①③②④）→ 语句排序（片段阅读）；选项都是短词 → 逻辑填空；否则片段阅读"""
+    vals = [v for v in opts.values() if v]
+    if len(vals) < 4:
+        return ""
+    if all(SEQ_ONLY.match(v) for v in vals):
+        return "片段阅读"
+    if all(len(re.sub(r"[\s\W_]+", "", v)) <= 10 for v in vals):
+        return "逻辑填空"
+    return "片段阅读"
+
+
 def guess_board(section, stem, opts):
     s = stem
     if section in ("政治理论", "常识判断", "数量关系", "资料分析"):
@@ -221,6 +249,10 @@ def guess_board(section, stem, opts):
             return "逻辑填空"
         return "片段阅读"
     # 判断推理 或 不知道大题（练习册）
+    if not section:   # 练习册不知道大题：先按言语的问法认
+        v = verbal_board(s, opts)
+        if v:
+            return v
     figure_opts = not opts or all(re.sub(r"[\s\W_]+", "", v).upper() in ("", "A", "B", "C", "D") for v in opts.values())
     # 有判断推理大题时题干关键词就够；练习册（不知道大题）还要求选项本身是图，免得“组合而成”之类的词误判
     if (any(k in s for k in FIGURE_KW) and (section or figure_opts)) or (opts and figure_opts):
