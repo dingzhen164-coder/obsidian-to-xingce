@@ -174,34 +174,37 @@ OPT_BOOK = re.compile(r"(?:(?<=[\s。？?！!：:”）)])|^)([A-Dc])(?:\s*[\.�
 
 
 def split_options(text, scrambled):
-    """返回 (题干, {字母: 选项}, 问题列表)。
-    选项常排成两栏（A C 一行、B D 一行），粉笔 OCR 还会把 B D 挪到答案后面，所以不按顺序找：
-    题干 = 第一个 A 之前；B C D 各取 A 之后第一次出现的位置"""
+    """(题干, {字母: 选项}, 问题)。选项常排两栏（A C 一行、B D 一行），粉笔 OCR 还会把 B D 挪到答案行后面，
+    所以不按顺序找：题干 = 第一个 A 之前，B C D 各取 A 之后第一次出现的位置"""
     rx = OPT_FENBI if scrambled else OPT_BOOK
     marks = [(m.start(), m.end(), m.group(1).upper()) for m in rx.finditer(text)]
-    chosen = []
     first_a = next((mk for mk in marks if mk[2] == "A"), None)
-    if first_a:
-        chosen, seen = [first_a], {"A"}
-        for mk in marks:
-            if mk[0] > first_a[0] and mk[2] not in seen:
-                seen.add(mk[2])
-                chosen.append(mk)
-    problems = []
-    if not chosen:
+    if not scrambled:
+        # 练习册：题干里常有“A型血”“A领导”“特征A”，取【最后一个】后面还跟着 B、C、D 的 A 作为选项开头
+        full = [mk for mk in marks if mk[2] == "A" and {"B", "C", "D"} <= {x[2] for x in marks if x[0] > mk[0]}]
+        if full:
+            first_a = full[-1]
+    if not first_a:
         return text.strip(), {}, ["没找到选项"]
+    chosen, seen = [first_a], {"A"}
+    for mk in marks:
+        if mk[0] > first_a[0] and mk[2] not in seen:
+            seen.add(mk[2])
+            chosen.append(mk)
     chosen.sort()
     stem = text[:chosen[0][0]].strip()
     opts = {}
     for i, (s, e, letter) in enumerate(chosen):
         end = chosen[i + 1][0] if i + 1 < len(chosen) else len(text)
         opts[letter] = re.sub(r"\s+", " ", text[e:end]).strip()
-    missing = [x for x in "ABCD" if x not in opts or not opts[x]]
+    problems = []
+    missing = [x for x in "ABCD" if not opts.get(x)]
     if missing:
         problems.append("缺选项 " + "".join(missing))
-    long_opt = [k for k, v in opts.items() if len(v) > 160]
-    if long_opt:
-        problems.append("选项 %s 太长，可能吞进了下一题或材料" % "".join(long_opt))
+    if any(len(v) > 160 for v in opts.values()):
+        problems.append("有选项太长，可能吞进了下一题")
+    if not scrambled and any(re.search(r"(?:^|\s)[A-D][\.．。:：、]\S", v) for v in opts.values()):
+        problems.append("选项里还夹着另一组选项标记，可能拆错了")
     return stem, opts, problems
 
 
@@ -233,6 +236,58 @@ def guess_board(section, stem, opts):
     if section == "言语理解与表达":
         return "片段阅读"
     return UNSORTED
+
+
+# ---------------------------------------------------------------- OCR 符号修复：①②③、ⅠⅡⅢ
+CIRCLED = "①②③④⑤⑥⑦⑧⑨"
+ROMAN = {"I": "Ⅰ", "II": "Ⅱ", "III": "Ⅲ", "IV": "Ⅳ", "V": "Ⅴ", "VI": "Ⅵ"}
+# 只由序号和连接词组成的选项（“①③④”“仅Ⅰ和Ⅲ”“@②4”“I、II都推不出”）
+_SEQ_OPT = re.compile(r"^[\s①-⑨Ⅰ-Ⅵ\dIVHl@Q?？、，,和与及或仅只有都是不能推出得只均]*$")
+_ROMAN_RUN = re.compile(r"(?<![A-Za-z])(IV|VI|V|III|II|I)(?![A-Za-z])")
+
+
+def fix_symbols(stem, opts):
+    """OCR 常把 ① 认成 @ / Q / 1，④ 认成 4，Ⅰ Ⅱ Ⅲ 认成 I / II / III（甚至 H）。只在明确是序号的地方还原：
+    - 题干里已有 ①② 序列时，紧接着序列、出现在句首 / 标点后的数字（或 @、Q）还原成下一个圈号；
+    - 题干用 I / II / III 当陈述编号（后面跟标点或汉字）时还原成 Ⅰ Ⅱ Ⅲ；
+    - 选项只由序号和“和 / 仅 / 都”等组成时，按题干用的是圈号还是罗马数字整体还原。
+    返回 (题干, 选项, 问题)；还原后同一选项里序号重复（如 ②②）说明 OCR 丢了信息，交给待修核对"""
+    problems = []
+    uses_circled = bool(re.search("[①-⑨]", stem)) or any(re.search("[①-⑨]", v) for v in opts.values())
+    uses_roman = bool(re.search("[Ⅰ-Ⅵ]", stem) or re.search(r"(?<![A-Za-z])I{1,3}(?:[\.．。:：、]|(?=[\u4e00-\u9fff]))", stem)) \
+        or any(re.search(r"(?<![A-Za-z])I{1,3}(?![A-Za-z])", v) and _SEQ_OPT.match(v) for v in opts.values())
+    if uses_circled:
+        out, last, i = [], 0, 0
+        while i < len(stem):
+            ch = stem[i]
+            if ch in CIRCLED:
+                last = CIRCLED.index(ch) + 1
+            elif last and i and (stem[i - 1] in " \t\n。；;，,：:）)" or stem[i - 1] in CIRCLED) \
+                    and ((ch.isdigit() and int(ch) == last + 1) or (ch in "@Q" and last == 0)) \
+                    and i + 1 < len(stem) and re.match(r"[\u4e00-\u9fffA-Z“（(]", stem[i + 1]):
+                last += 1
+                ch = CIRCLED[last - 1]
+            out.append(ch)
+            i += 1
+        stem = "".join(out)
+        stem = re.sub(r"(^|[\s。；;：:])[@Q](?=[\u4e00-\u9fff])", lambda m: m.group(1) + "①", stem)
+    if uses_roman:
+        stem = re.sub(r"(?<![A-Za-z])(IV|VI|V|III|II|I)(?=[\.．。:：、\s]|[\u4e00-\u9fff])", lambda m: ROMAN[m.group(1)], stem)
+    new = {}
+    for k, v in opts.items():
+        if v and _SEQ_OPT.match(v) and len(v) <= 16:
+            if uses_circled and not uses_roman:
+                v = re.sub(r"[@Q]", "①", v)
+                v = re.sub(r"[1-9]", lambda m: CIRCLED[int(m.group(0)) - 1], v)
+            elif uses_roman:
+                v = v.replace("H", "II").replace("l", "I")
+                v = _ROMAN_RUN.sub(lambda m: ROMAN[m.group(1)], v)
+            v = re.sub(r"\s*[,，]\s*", "、", v)   # 序号之间统一用顿号
+            marks = re.findall("[①-⑨Ⅰ-Ⅵ]", v)
+            if len(marks) != len(set(marks)) or re.search(r"[?？@Q]", v):
+                problems.append("选项 %s 的序号可能被 OCR 认错（%s），请对照原书" % (k, v))
+        new[k] = v
+    return stem, new, problems
 
 
 def board_by_options(opts):
@@ -367,6 +422,8 @@ def parse_book(lines):
             end = starts[i + 1][0] if i + 1 < len(starts) else len(text)
             stem, opts, problems = split_options(text[e:end], scrambled=False)
             stem = re.sub(r"\s*\n\s*", "", stem)
+            stem, opts, sym = fix_symbols(stem, opts)
+            problems += sym
             out.append({"num": n, "group": max(group, 1), "stem": stem, "options": opts, "answer": "",
                         "board": guess_board("", stem, opts), "problems": problems})
         for i in skipped:
