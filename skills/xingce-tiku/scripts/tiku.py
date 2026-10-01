@@ -142,7 +142,8 @@ def clean_lines(text):
         if re.search(r"本试卷由粉笔用户|第\s*\d+\s*页\s*[，,]\s*共\s*\d+\s*页|扫描二维码|下载「粉笔」|听课刷题|就用粉笔"
                      r"|公考资料|V[:：]\s*\w{6,}|SIHAIGONGKAO|微信|关注公众号", ln):
             continue
-        if count.get(ln, 0) >= 4 and not re.match(r"^[A-D][\.．。:：、]", ln) and not re.search(r"填入问号处|正确答案|^[A-D]$", ln):
+        if count.get(ln, 0) >= 4 and not re.match(r"^[A-D][\.．。:：、]", ln) and not re.search(r"填入问号处|正确答案|^[A-D]$", ln) \
+                and not SET_RE.match(ln):
             continue
         out.append(ln)
     return out
@@ -287,42 +288,72 @@ def parse_fenbi(lines):
 START_RE = re.compile(r"(?:(?<=[\s。？?！!”）)])|^)([1-9]\d{0,2})\s*[\.．。:：、，,]?\s*(?=[\u4e00-\u9fff“\"（(A-Z])")
 
 
-def parse_book(lines):
-    """练习册：题号连续（每套练习从 1 重新开始），选项按 A→B→C→D；答案一般不在同一本里"""
-    text = "\n".join(lines)
+# 练习册每套开头的标记行：“练习题03”“05 练习题”“页07 练习题”“o1 练习题”（OCR 常把序号挪到前面或丢掉）
+SET_RE = re.compile(r"^[#＃\w页\s]{0,5}练习题?\s*\d{0,3}$")
+
+
+def _starts(text):
+    """一段文字里的题目起点：题号连续，四个选项出完才可能开始下一题；允许漏认一个题号"""
     cands = [(m.start(), m.end(), int(m.group(1))) for m in START_RE.finditer(text)]
     starts, last, skipped = [], 0, []
 
     def has_abcd(seg):
-        letters = {m.group(1).upper() for m in OPT_BOOK.finditer(seg)}
-        return set("ABCD") <= letters
+        return set("ABCD") <= {m.group(1).upper() for m in OPT_BOOK.finditer(seg)}
 
     for c in cands:
         n = c[2]
         if starts and not has_abcd(text[starts[-1][1]:c[0]]):
             if n == 1 and starts[-1][2] == 1:
-                starts[-1] = c  # 两个“1”之间没有选项：前一个是目录/标题里的数字，以后一个为准
-            continue  # 上一题选项还没出完，这个数字是题干里的
+                starts[-1] = c  # 两个“1”之间没有选项：前一个是目录里的数字
+            continue
         if not starts:
-            if n == 1:
+            if n in (1, 2):  # 第 1 题题号没认出来时从 2 开始
                 starts.append(c)
-                last = 1
-        elif n == 1 or last < n <= last + 2:  # 允许漏识别一个题号（OCR 把“13”认成别的）
+                last = n
+        elif n == 1 or last < n <= last + 2:
             if n == last + 2:
                 skipped.append(len(starts) - 1)
             starts.append(c)
             last = n
+    return starts, skipped
+
+
+def parse_book(lines):
+    """练习册：有“练习题NN”标记就按标记分套（第几套 = 第几个有题的标记段，和答案表的“练习NN”对得上）；
+    没有标记就按“题号回到 1”分套。每套里题号连续，选项按 A→B→C→D"""
+    segs, cur = [], []
+    for ln in lines:
+        if SET_RE.match(ln) and len(ln) <= 12:
+            segs.append(cur)
+            cur = []
+        else:
+            cur.append(ln)
+    segs.append(cur)
+    texts = ["\n".join(x) for x in segs]
+    by_marker = sum(bool(_starts(t)[0]) for t in texts) >= 2
+    if not by_marker:
+        texts = ["\n".join(lines)]
     out, group = [], 0
-    for i, (s, e, n) in enumerate(starts):
-        if n == 1:
+    for text in texts:
+        starts, skipped = _starts(text)
+        if not starts:
+            continue  # 目录、封面
+        if by_marker:
             group += 1
-        end = starts[i + 1][0] if i + 1 < len(starts) else len(text)
-        stem, opts, problems = split_options(text[e:end], scrambled=False)
-        stem = re.sub(r"\s*\n\s*", "", stem)
-        out.append({"num": n, "group": group, "section": "", "stem": stem, "options": opts,
-                    "answer": "", "mine": "", "board": guess_board("", stem, opts), "problems": problems})
-    for i in skipped:
-        out[i]["problems"].append("下一个题号没识别到（第 %d 题），它可能并在这道题的选项里，请拆开" % (out[i]["num"] + 1))
+        first = len(out)
+        for i, (s, e, n) in enumerate(starts):
+            if not by_marker and n == 1:
+                group += 1
+            end = starts[i + 1][0] if i + 1 < len(starts) else len(text)
+            stem, opts, problems = split_options(text[e:end], scrambled=False)
+            stem = re.sub(r"\s*\n\s*", "", stem)
+            out.append({"num": n, "group": max(group, 1), "stem": stem, "options": opts, "answer": "",
+                        "board": guess_board("", stem, opts), "problems": problems})
+        for i in skipped:
+            q = out[first + i]
+            q["problems"].append("下一题（第 %d 题）的题号没认出来，可能并在这道题的选项里" % (q["num"] + 1))
+        if by_marker and starts[0][2] == 2:
+            out[first]["problems"].append("这一套的第 1 题题号没认出来，可能并在别处，请核对")
     return out
 
 
