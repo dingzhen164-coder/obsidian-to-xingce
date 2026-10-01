@@ -209,9 +209,11 @@ def split_options(text, scrambled):
 
 
 # ---------------------------------------------------------------- 分类
-VERBAL_FILL = re.compile(r"依次填入|填入(画)?横线|横线(处|部分)")
-VERBAL_READ = re.compile(r"这段文字|这段话|文段|意在|旨在|主要说明|主要介绍|重新排列|语序正确|排序正确|最恰当的标题|"
-                         r"作为标题|接下来最可能|下文最可能|语句填入|填入文中")
+LOGIC_STRONG = re.compile(r"如果为真|若为真|削弱|加强|质疑|反驳|前提|假设|一定为真|一定为假|真话|假话|推理结构|论证方式")
+# 言语问法要按完整短语认：“同意在本周末”里也有“意在”，“依次填入图形中”是逻辑题
+VERBAL_FILL = re.compile(r"填入(?:文中|上文)?(?:画|划)横线|横线(?:处|部分)|依次填入.{0,4}最恰当")
+VERBAL_READ = re.compile(r"这段文字|这段话|文段|上述文字|(?:意在|旨在|主要)(?:说明|强调|表明|告诉|指出|阐述|揭示|突出|介绍|讲|论述|讨论)|"
+                         r"重新排列|语序正确|排序正确|标题|接下来最可能|下文最可能|语句填入|填入文中")
 SEQ_ONLY = re.compile(r"^[\s①-⑨\d、，,]+$")
 
 
@@ -249,7 +251,7 @@ def guess_board(section, stem, opts):
             return "逻辑填空"
         return "片段阅读"
     # 判断推理 或 不知道大题（练习册）
-    if not section:   # 练习册不知道大题：先按言语的问法认
+    if not section and not LOGIC_STRONG.search(re.split(r"[。！？”]", s.rstrip())[-1]):   # 练习册不知道大题：问句不是明显的逻辑问法时，先按言语的问法认
         v = verbal_board(s, opts)
         if v:
             return v
