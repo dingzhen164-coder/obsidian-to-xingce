@@ -77,12 +77,15 @@ def cn2int(s):
     return total + num
 
 
-def norm_stem(s):
-    """查重用：去掉来源括号、图片、空白和标点，取前 60 个字"""
-    s = re.sub(r"^（[^）]{0,30}）", "", s.strip())
-    s = re.sub(r"!\[\[[^\]]*\]\]", "", s)
-    s = re.sub(r"[\s\W_]+", "", s)
-    return s[:60]
+def norm_stem(s, opts=None):
+    """查重指纹：去掉来源括号、空白和标点后的【完整】题干 + 图片文件名 + 四个选项。
+    不能只取开头几十个字、也不能丢掉图片：图形推理的题干都是同一句“从所给的四个选项中……”，
+    资料分析同组几道题开头都是同一段材料，只看开头会把不同的题误当成重复。"""
+    s = re.sub(r"^（[^）]{0,30}）", "", (s or "").strip())
+    s = re.sub(r"!\[\[([^\]|]*)(?:\|[^\]]*)?\]\]", lambda m: " " + Path(m.group(1)).name + " ", s)
+    if opts:
+        s += "".join("%s%s" % (k, opts.get(k, "")) for k in "ABCD")
+    return re.sub(r"[\s\W_]+", "", s)
 
 
 # ---------------------------------------------------------------- 库与路径
@@ -550,7 +553,7 @@ def existing(bank):
         for b in parse_blocks(f.read_text(encoding="utf-8-sig")):
             board = f.name[:-len("真题.md")]
             ids[(board, b["id"])] = f.name
-            k = norm_stem(b["fields"].get("题干", ""))
+            k = norm_stem(b["fields"].get("题干", ""), parse_opts(b["fields"].get("选项")))
             if len(k) >= 12:
                 stems[k] = "%s %s" % (f.name, b["id"])
     return ids, stems
@@ -601,7 +604,7 @@ def commit(args):
             # 来源写在题目最前面；题干以图片开头时来源单独一行，图片才能正常显示
             stem = "（%s）%s%s" % (source, "\n" if stem.startswith("![[") else "", stem)
         stem, missing = place_images(vault, bank, board, b["id"], stem, args.dry_run)
-        key = norm_stem(stem)
+        key = norm_stem(stem, parse_opts(f.get("选项")))
         if (board, b["id"]) in ids or (len(key) >= 12 and key in stems):
             dup.append("%s（已在 %s）" % (b["id"], ids.get((board, b["id"])) or stems.get(key)))
             continue
