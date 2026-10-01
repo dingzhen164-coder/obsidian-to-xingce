@@ -65,7 +65,7 @@ foreach ($T in $Targets) {
   if (Test-Path $jd) {
     Get-ChildItem $jd -Filter *.md | Where-Object { $_.Name -notmatch '^(SKILL|board-[a-z-]+)\.md$' } | Remove-Item -Force
   }
-  foreach ($s in "xingce-jiexi-all","xingce-mokao-split","xingce-changshi","xingce-shuliang","xingce-feiman") {
+  foreach ($s in "xingce-jiexi-all","xingce-mokao-split","xingce-changshi","xingce-shuliang","xingce-feiman","xingce-tiku") {
     $d = Join-Path $T $s
     New-Item $d -ItemType Directory -Force | Out-Null
     Copy-Item "$src\$s\*" $d -Recurse -Force
