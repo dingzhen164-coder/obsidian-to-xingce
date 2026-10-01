@@ -411,6 +411,9 @@ def parse_review(season_dir):
         stem = "\n".join(q.pop("lines")).strip()
         stem = re.sub(r"\n{3,}", "\n\n", stem)
         q.update(section="", stem=stem, mine="", problems=[])
+        # 选项就是图里的 A/B/C/D（图形推理常见）时，拆分脚本不写选项行：有截图就补成 A. A … D. D（选项看图）
+        if "![[" in q["stem"] and not any(q["options"].values()):
+            q["options"] = {k: k for k in "ABCD"}
         if set(q["options"]) != set("ABCD"):
             q["problems"].append("复盘文件里选项不全")
     return sorted(out, key=lambda q: q["num"])
