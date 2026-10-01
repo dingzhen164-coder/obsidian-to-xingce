@@ -218,7 +218,7 @@ def guess_board(section, stem, opts):
         return "图形推理"
     if "定义" in s and ("属于" in s or "符合" in s or "不符合" in s or "不属于" in s):
         return "定义判断"
-    if len(s) <= 60 and (re.search(r"(对于|相当于)", s) or (opts and all(re.search(r"[:：]", v) for v in opts.values() if v))):
+    if len(s) <= 40 and not re.search(r"以下|下列|哪项|哪句", s) and (re.search(r"(对于|相当于)", s) or (opts and all(re.search(r"[:：]", v) for v in opts.values() if v))):
         return "类比推理"
     if any(k in re.sub(r"(如果|若|假如|假设)[^，,：:]{0,4}为真", "", s) for k in FORMAL_KW):  # “以下哪项如果为真”是论证题的问法
         return "形式逻辑"
