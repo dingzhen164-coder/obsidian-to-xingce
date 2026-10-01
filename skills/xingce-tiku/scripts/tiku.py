@@ -218,7 +218,9 @@ def guess_board(section, stem, opts):
             return "逻辑填空"
         return "片段阅读"
     # 判断推理 或 不知道大题（练习册）
-    if any(k in s for k in FIGURE_KW) or (opts and all(v in ("", "A", "B", "C", "D") for v in opts.values())):
+    figure_opts = not opts or all(re.sub(r"[\s\W_]+", "", v).upper() in ("", "A", "B", "C", "D") for v in opts.values())
+    # 有判断推理大题时题干关键词就够；练习册（不知道大题）还要求选项本身是图，免得“组合而成”之类的词误判
+    if (any(k in s for k in FIGURE_KW) and (section or figure_opts)) or (opts and figure_opts):
         return "图形推理"
     if "定义" in s and ("属于" in s or "符合" in s or "不符合" in s or "不属于" in s):
         return "定义判断"
@@ -231,6 +233,20 @@ def guess_board(section, stem, opts):
     if section == "言语理解与表达":
         return "片段阅读"
     return UNSORTED
+
+
+def board_by_options(opts):
+    """问法里认不出板块时，按选项的样子判断逻辑题：
+    选项很短，或长度相近又有共同的字（“栖霞镇 / 莲花镇 / 五溪镇”“甲和乙 / 乙和丙”“仅I / 仅II”）→ 形式逻辑；
+    选项长、长短不一（一句一句的论据）→ 论证逻辑。只在逻辑类练习册里用（见 _collect）"""
+    vals = [re.sub(r"[\s\W_]+", "", v) for v in opts.values()]
+    if len(vals) < 4 or not all(vals):
+        return ""
+    lens = [len(v) for v in vals]
+    common = set(vals[0]).intersection(*map(set, vals[1:]))
+    if max(lens) <= 6 or (max(lens) - min(lens) <= 4 and max(lens) <= 20 and common):
+        return "形式逻辑"
+    return "论证逻辑"
 
 
 def guess_topic(board, stem):
@@ -288,7 +304,8 @@ def parse_fenbi(lines):
 
 
 # ---------------------------------------------------------------- 拆题：练习册
-START_RE = re.compile(r"(?:(?<=[\s。？?！!”）)])|^)([1-9]\d{0,2})\s*[\.．。:：、，,]?\s*(?=[\u4e00-\u9fff“\"（(A-Z])")
+# 题号：后面有标点时接什么都行（“15：2008年…”“2.《道路交通安全法》…”）；没有标点时后面必须是汉字等（“18有些人…”）
+START_RE = re.compile(r"(?:(?<=[\s。？?！!”）)])|^)([1-9]\d{0,2})(?:\s*[\.．。:：、，,]\s*(?=\S)|\s*(?=[\u4e00-\u9fff“\"（(《A-Z]))")
 
 
 # 练习册每套开头的标记行：“练习题03”“05 练习题”“页07 练习题”“o1 练习题”（OCR 常把序号挪到前面或丢掉）
@@ -467,6 +484,12 @@ def prepare(args):
     if season:
         d = vault / "FB模考试卷复盘" / "板块复盘" / ("第%d季" % season) / "attachments"
         shot_dir = d if d.is_dir() else None
+    from collections import Counter as _C
+    known = _C(q["board"] for q in qs if q["board"] and q["board"] != UNSORTED)
+    if not fenbi and known and (known["论证逻辑"] + known["形式逻辑"]) * 2 > sum(known.values()):
+        for q in qs:   # 逻辑类练习册：问法认不出时按选项样子判断
+            if q["board"] in ("", UNSORTED):
+                q["board"] = board_by_options(q["options"]) or UNSORTED
     for q in qs:
         q["id"] = "%s-%03d" % (code, q["num"]) if fenbi else "%s-%02d-%02d" % (code, q["group"], q["num"])
         if args.board:
