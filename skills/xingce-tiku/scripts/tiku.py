@@ -425,28 +425,37 @@ def _starts(text):
     return starts, skipped
 
 
-def parse_book(lines):
+def parse_book(lines, start_set=0):
     """练习册：有“练习题NN”标记就按标记分套（第几套 = 第几个有题的标记段，和答案表的“练习NN”对得上）；
     没有标记就按“题号回到 1”分套。每套里题号连续，选项按 A→B→C→D"""
-    segs, cur = [], []
+    segs, cur, nums, mark = [], [], [], None
     for ln in lines:
         if SET_RE.match(ln) and len(ln) <= 12:
             segs.append(cur)
+            nums.append(mark)
             cur = []
+            d = re.findall(r"\d+", ln)
+            mark = int(d[-1]) if d else None   # 标记里写的套号（“练习题16”）；分上下册时下册从 16 开始
         else:
             cur.append(ln)
     segs.append(cur)
+    nums.append(mark)
     texts = ["\n".join(x) for x in segs]
     by_marker = sum(bool(_starts(t)[0]) for t in texts) >= 2
     if not by_marker:
-        texts = ["\n".join(lines)]
+        texts, nums = ["\n".join(lines)], [None]
     out, group = [], 0
-    for text in texts:
+    for text, num in zip(texts, nums):
         starts, skipped = _starts(text)
         if not starts:
             continue  # 目录、封面
         if by_marker:
-            group += 1
+            # 用标记里的套号：第一套可以从任意号开始（下册），之后只接受紧跟着的号，OCR 认错 / 没认出就按上一套 +1
+            ok = num is not None and 1 <= num <= 300 and (group < num <= group + 3 if group else True)
+            if start_set:      # 用户指定了第一套是练习几：按顺序往后排，不看标记里的数字
+                group = start_set if not group else group + 1
+            else:
+                group = num if ok else group + 1
         first = len(out)
         for i, (s, e, n) in enumerate(starts):
             if not by_marker and n == 1:
