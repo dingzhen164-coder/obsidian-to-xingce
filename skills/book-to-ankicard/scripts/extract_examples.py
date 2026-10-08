@@ -32,7 +32,7 @@ import re
 import sys
 from pathlib import Path
 
-DEFAULT_MARKER = r"^\s*【(例\s?\d+|拓展|例题)】\s*[（(]?([^）)]*)[）)]?\s*$"
+DEFAULT_MARKER = r"^\s*【(例\s?\d+|拓展|例题|回顾)】\s*[（(]?([^）)]*)[）)]?.*$"
 DEFAULT_END = (
     r"^\s*([一二三四五六七八九十]+、|（[一二三四五六七八九十]+）|第[一二三四五六七八九十\d]+[章讲节]|"
     r"本讲|引言小结|结语|提示\s*$|小结\s*$|考试权重|【)"
