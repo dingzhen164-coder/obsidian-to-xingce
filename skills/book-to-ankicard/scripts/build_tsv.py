@@ -13,10 +13,23 @@
 可选：
     tags      标签列表（或空格分隔字符串）。标签内部不能有空格，会自动换成下划线。
     source    出处，会附在答案末尾，小字显示。
-    evidence  书中能证明这张卡的一小段原文（建议 8~40 字）。给了 --source 时，
-              会逐张核对它是否真的出现在全书文本里，用来抓“书里没有的内容”。
+    evidence  书中能证明这张卡的一小段原文（建议 8~40 字）；一张卡汇总了多处内容时，
+              可以给字符串列表，每一段都会被核对。给了 --source 时，会逐段核对它们
+              是否真的出现在全书文本里，用来抓“书里没有的内容”。
               evidence 不会写进 .tsv。
     kind      卡片类别，只用于统计（concept / method / rule / compare / number / example …）。
+
+front/back 里可以用的排版标记（纯文本，脚本负责转成 Anki 的 HTML）：
+    **文字**            加粗
+    ==文字==            红色加粗（用来标出关键词，少用）
+    # 标题              小标题（蓝色加粗，独占一行）
+    - 条目              无序列表（连续的行归为一组）
+    1. 条目             有序列表
+    > 引用              引用块，用来放例题（连续的行归为一块）
+    | a | b |           表格（第一行为表头；|---|---| 分隔行会被忽略）
+    ---                 分隔线
+    空行                段落间距
+答案区一律左对齐（Anki 默认居中，长内容会很难读）。
 
 导出格式依据 Anki 官方手册“Text files”：UTF-8、制表符分隔、文件头
 #separator / #html / #notetype / #deck / #tags column。
@@ -51,12 +64,80 @@ def ngram_coverage(ev: str, book: str, n: int = 4) -> float:
     return sum(1 for g in grams if g in book) / len(grams)
 
 
-def to_html(text: str) -> str:
-    """纯文本 → 安全的 Anki HTML：转义、换行、**加粗**。"""
-    t = html.escape(text.strip(), quote=False)
-    t = re.sub(r"\*\*(.+?)\*\*", r"<b>\1</b>", t)
-    t = t.replace("\r\n", "\n").replace("\r", "\n").replace("\t", " ")
-    return t.replace("\n", "<br>")
+INLINE_BOLD = re.compile(r"\*\*(.+?)\*\*")
+INLINE_HI = re.compile(r"==(.+?)==")
+STYLE_H = "font-weight:bold;color:#2e6da4;margin:0.7em 0 0.2em"
+STYLE_Q = "border-left:3px solid #999;padding:2px 0 2px 10px;margin:6px 0;font-size:0.92em"
+STYLE_T = "border-collapse:collapse;margin:6px 0;font-size:0.92em"
+STYLE_C = "border:1px solid #999;padding:3px 7px;text-align:left;vertical-align:top"
+
+
+def inline(t: str) -> str:
+    t = html.escape(t, quote=False)
+    t = INLINE_BOLD.sub(r"<b>\1</b>", t)
+    return INLINE_HI.sub(r"<b style='color:#c0392b'>\1</b>", t)
+
+
+def to_html(text: str, left: bool = True) -> str:
+    """纯文本（带上面的排版标记）→ Anki HTML。输出是单行，没有换行符。"""
+    lines = text.replace("\r\n", "\n").replace("\r", "\n").replace("\t", " ").strip().split("\n")
+    out: list[str] = []
+    i = 0
+    while i < len(lines):
+        ln = lines[i].rstrip()
+        st = ln.strip()
+        if not st:
+            if out and out[-1] != "<div style='height:0.5em'></div>":
+                out.append("<div style='height:0.5em'></div>")
+            i += 1
+        elif st == "---":
+            out.append("<hr>")
+            i += 1
+        elif st.startswith("# "):
+            out.append(f"<div style='{STYLE_H}'>{inline(st[2:])}</div>")
+            i += 1
+        elif st.startswith("> "):
+            buf = []
+            while i < len(lines) and lines[i].strip().startswith(">"):
+                buf.append(inline(lines[i].strip().lstrip(">").strip()))
+                i += 1
+            out.append(f"<div style='{STYLE_Q}'>" + "<br>".join(buf) + "</div>")
+        elif st.startswith("|"):
+            rows = []
+            while i < len(lines) and lines[i].strip().startswith("|"):
+                cells = [c.strip() for c in lines[i].strip().strip("|").split("|")]
+                if not all(re.fullmatch(r":?-{2,}:?", c) for c in cells if c):
+                    rows.append(cells)
+                i += 1
+            tr = []
+            for r_i, cells in enumerate(rows):
+                tag = "th" if r_i == 0 else "td"
+                tr.append("<tr>" + "".join(f"<{tag} style='{STYLE_C}'>{inline(c)}</{tag}>" for c in cells) + "</tr>")
+            out.append(f"<table style='{STYLE_T}'>" + "".join(tr) + "</table>")
+        elif re.match(r"^[-•]\s+", st):
+            items = []
+            while i < len(lines) and re.match(r"^[-•]\s+", lines[i].strip()):
+                items.append("<li>" + inline(re.sub(r"^[-•]\s+", "", lines[i].strip())) + "</li>")
+                i += 1
+            out.append("<ul style='margin:2px 0;padding-left:1.3em;text-align:left'>" + "".join(items) + "</ul>")
+        elif re.match(r"^\d+[.、]\s*", st):
+            items = []
+            while i < len(lines) and re.match(r"^\d+[.、]\s*", lines[i].strip()):
+                items.append("<li>" + inline(re.sub(r"^\d+[.、]\s*", "", lines[i].strip())) + "</li>")
+                i += 1
+            out.append("<ol style='margin:2px 0;padding-left:1.5em;text-align:left'>" + "".join(items) + "</ol>")
+        else:
+            # 普通段落：连续的普通行用 <br> 连接
+            buf = []
+            while i < len(lines):
+                t = lines[i].strip()
+                if not t or t == "---" or t.startswith(("# ", "> ", "|")) or re.match(r"^[-•]\s+", t) or re.match(r"^\d+[.、]\s*", t):
+                    break
+                buf.append(inline(t))
+                i += 1
+            out.append("<div>" + "<br>".join(buf) + "</div>")
+    body = "".join(out)
+    return f"<div style='text-align:left'>{body}</div>" if left else body
 
 
 def load_cards(paths: list[Path]) -> list[dict]:
@@ -99,10 +180,16 @@ def main() -> None:
     ap.add_argument("--out", required=True, type=Path)
     ap.add_argument("--source", type=Path, help="全书文本（extract.py 生成的 full_text.txt），用于核对 evidence")
     ap.add_argument("--notetype", default="Basic")
-    ap.add_argument("--max-front", type=int, default=120)
-    ap.add_argument("--max-back", type=int, default=400)
+    ap.add_argument("--profile", choices=["memory", "method"], default="memory",
+                    help="memory=记忆型（一点一卡，答案短）；method=方法论型（体系卡，答案可长）")
+    ap.add_argument("--max-front", type=int)
+    ap.add_argument("--max-back", type=int)
     ap.add_argument("--strict", action="store_true", help="有错误时返回非零退出码")
     a = ap.parse_args()
+    if a.max_front is None:
+        a.max_front = 150 if a.profile == "method" else 120
+    if a.max_back is None:
+        a.max_back = 1800 if a.profile == "method" else 400
 
     cards = load_cards(a.inputs)
     book = norm_for_match(a.source.read_text("utf-8")) if a.source else None
@@ -139,23 +226,37 @@ def main() -> None:
         if "？" not in front and "?" not in front and not front.endswith(("是", "为", "：", ":")):
             warns.append(f"{w} 问题不像问句，建议改成明确提问：{front[:30]}")
 
-        ev = (c.get("evidence") or "").strip()
+        evs = c.get("evidence") or []
+        if isinstance(evs, str):
+            evs = [evs]
+        evs = [e.strip() for e in evs if e and e.strip()]
         if book is not None:
-            if not ev:
+            if not evs:
                 ev_none += 1
-            elif norm_for_match(ev) in book:
-                ev_ok += 1
-            elif ngram_coverage(norm_for_match(ev), book) >= 0.8:
-                ev_near += 1
-                notes.append(f"{w} evidence 仅近似匹配（多半是 PDF 提取把强调文字挪了位置），请对照原文看一眼：{front[:30]}")
             else:
-                ev_miss += 1
-                warns.append(f"{w} evidence 在原书中找不到（可能是编造或抄错）：{front[:30]}")
+                levels = []
+                for e in evs:
+                    ne = norm_for_match(e)
+                    if ne in book:
+                        levels.append("ok")
+                    elif ngram_coverage(ne, book) >= 0.8:
+                        levels.append("near")
+                    else:
+                        levels.append("miss")
+                        warns.append(f"{w} evidence 在原书中找不到（可能是编造或抄错）：「{e[:24]}」 → {front[:24]}")
+                if "miss" in levels:
+                    ev_miss += 1
+                elif "near" in levels:
+                    ev_near += 1
+                    notes.append(f"{w} evidence 仅近似匹配（多半是 PDF 提取把强调文字挪了位置），请对照原文看一眼：{front[:30]}")
+                else:
+                    ev_ok += 1
 
-        back_html = to_html(back)
+        back_html = to_html(back, left=False)
         if c.get("source"):
             src = html.escape(str(c["source"]), quote=False)
-            back_html += f"<br><br><small style='color:gray'>出处：{src}</small>"
+            back_html += f"<div style='margin-top:0.8em;font-size:0.8em;color:gray'>出处：{src}</div>"
+        back_html = f"<div style='text-align:left'>{back_html}</div>"
         tags = clean_tags(c.get("tags"))
         rows.append([to_html(front), back_html, tags])
         kinds[c.get("kind") or "未标注"] += 1
