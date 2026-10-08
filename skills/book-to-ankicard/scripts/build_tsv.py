@@ -22,6 +22,8 @@
 front/back 里可以用的排版标记（纯文本，脚本负责转成 Anki 的 HTML）：
     **文字**            加粗
     ==文字==            红色加粗（用来标出关键词，少用）
+    ^^文字^^            绿色小标签（不加粗）。注意：两处加粗不要只隔一个换行紧挨着，
+                        某些查看器（如“玉简”）会把它们的 ** 合并成一段加粗
     # 标题              小标题（蓝色加粗，独占一行）
     - 条目              无序列表（连续的行归为一组）
     1. 条目             有序列表
@@ -66,35 +68,69 @@ def ngram_coverage(ev: str, book: str, n: int = 4) -> float:
 
 INLINE_BOLD = re.compile(r"\*\*(.+?)\*\*")
 INLINE_HI = re.compile(r"==(.+?)==")
-STYLE_H = "font-weight:bold;color:#2e6da4;margin:0.7em 0 0.2em"
-STYLE_Q = "border-left:3px solid #999;padding:2px 0 2px 10px;margin:6px 0;font-size:0.92em"
-STYLE_T = "border-collapse:collapse;margin:6px 0;font-size:0.92em"
-STYLE_C = "border:1px solid #999;padding:3px 7px;text-align:left;vertical-align:top"
+INLINE_LABEL = re.compile(r"\^\^(.+?)\^\^")  # ^^文字^^：绿色小标签（不加粗，避免相邻加粗被“玉简”类工具合并）
+# 样式只用 Anki 里有效的写法；“玉简”等会把 HTML 转成 Markdown 的工具只认颜色，其余样式被丢掉也不影响阅读。
+STYLE_H = "color:#2e6da4;margin:0.7em 0 0.2em"
+STYLE_Q = "border-left:3px solid #999;padding:2px 0 2px 10px;margin:6px 0"
+RICH_LINE = re.compile(r"^\s*(#{1,6}\s|[-*+]\s|\d+[.)]\s)", re.M)
 
 
 def inline(t: str) -> str:
     t = html.escape(t, quote=False)
     t = INLINE_BOLD.sub(r"<b>\1</b>", t)
-    return INLINE_HI.sub(r"<b style='color:#c0392b'>\1</b>", t)
+    # 红字：<span 颜色> 在外、<b> 在内。反过来写（<b> 包 <span>）会让 Markdown 化的工具留下游离的 **。
+    t = INLINE_LABEL.sub(r"<span style='color:#2e7d32'>\1</span>", t)
+    return INLINE_HI.sub(r"<span style='color:#c0392b'><b>\1</b></span>", t)
+
+
+def table_to_items(rows: list[list[str]]) -> list[str]:
+    """表格 → 列表项。很多卡片查看器会把 <table> 压平成一行字，所以不输出表格。
+
+    - 只有表头 + 1 行数据：转置，每列一条（“方式：通过……/利用……”）
+    - 两列：“**第一列**：第二列”
+    - 三列及以上：“**第一列**（表头2：内容；表头3：内容）”
+    """
+    if not rows:
+        return []
+    head, body = rows[0], rows[1:]
+    if len(body) == 1 and len(head) >= 2:
+        return [f"**{h}**：{v}" for h, v in zip(head, body[0])]
+    items = []
+    for r in body:
+        if len(r) == 1:
+            items.append(r[0])
+        elif len(r) == 2:
+            items.append(f"**{r[0]}**：{r[1]}")
+        else:
+            rest = "；".join(f"{h}：{v}" for h, v in zip(head[1:], r[1:]))
+            items.append(f"**{r[0]}**（{rest}）")
+    return items
 
 
 def to_html(text: str, left: bool = True) -> str:
-    """纯文本（带上面的排版标记）→ Anki HTML。输出是单行，没有换行符。"""
+    """纯文本（带上面的排版标记）→ Anki HTML。输出是单行，没有换行符。
+
+    只用 <h3> <b> <ul><ol><li> <div> <br> <span 颜色> 这些最常见的标签：
+    Anki 里正常显示；被转成 Markdown 的查看器也能保留标题、列表、加粗、颜色。
+    """
     lines = text.replace("\r\n", "\n").replace("\r", "\n").replace("\t", " ").strip().split("\n")
     out: list[str] = []
     i = 0
+
+    def is_special(t: str) -> bool:
+        return (not t) or t == "---" or t.startswith(("# ", "> ", "|")) or bool(re.match(r"^[-•]\s+", t)) or bool(re.match(r"^\d+[.、]\s*", t))
+
     while i < len(lines):
-        ln = lines[i].rstrip()
-        st = ln.strip()
+        st = lines[i].strip()
         if not st:
-            if out and out[-1] != "<div style='height:0.5em'></div>":
-                out.append("<div style='height:0.5em'></div>")
+            if out and out[-1] != "<div><br></div>":
+                out.append("<div><br></div>")
             i += 1
         elif st == "---":
             out.append("<hr>")
             i += 1
         elif st.startswith("# "):
-            out.append(f"<div style='{STYLE_H}'>{inline(st[2:])}</div>")
+            out.append(f"<h3 style='{STYLE_H}'>{inline(st[2:])}</h3>")
             i += 1
         elif st.startswith("> "):
             buf = []
@@ -109,35 +145,42 @@ def to_html(text: str, left: bool = True) -> str:
                 if not all(re.fullmatch(r":?-{2,}:?", c) for c in cells if c):
                     rows.append(cells)
                 i += 1
-            tr = []
-            for r_i, cells in enumerate(rows):
-                tag = "th" if r_i == 0 else "td"
-                tr.append("<tr>" + "".join(f"<{tag} style='{STYLE_C}'>{inline(c)}</{tag}>" for c in cells) + "</tr>")
-            out.append(f"<table style='{STYLE_T}'>" + "".join(tr) + "</table>")
+            items = table_to_items(rows)
+            out.append("<ul>" + "".join(f"<li>{inline(x)}</li>" for x in items) + "</ul>")
         elif re.match(r"^[-•]\s+", st):
             items = []
             while i < len(lines) and re.match(r"^[-•]\s+", lines[i].strip()):
                 items.append("<li>" + inline(re.sub(r"^[-•]\s+", "", lines[i].strip())) + "</li>")
                 i += 1
-            out.append("<ul style='margin:2px 0;padding-left:1.3em;text-align:left'>" + "".join(items) + "</ul>")
+            out.append("<ul>" + "".join(items) + "</ul>")
         elif re.match(r"^\d+[.、]\s*", st):
             items = []
             while i < len(lines) and re.match(r"^\d+[.、]\s*", lines[i].strip()):
                 items.append("<li>" + inline(re.sub(r"^\d+[.、]\s*", "", lines[i].strip())) + "</li>")
                 i += 1
-            out.append("<ol style='margin:2px 0;padding-left:1.5em;text-align:left'>" + "".join(items) + "</ol>")
+            out.append("<ol>" + "".join(items) + "</ol>")
         else:
-            # 普通段落：连续的普通行用 <br> 连接
             buf = []
-            while i < len(lines):
-                t = lines[i].strip()
-                if not t or t == "---" or t.startswith(("# ", "> ", "|")) or re.match(r"^[-•]\s+", t) or re.match(r"^\d+[.、]\s*", t):
-                    break
-                buf.append(inline(t))
+            while i < len(lines) and not is_special(lines[i].strip()):
+                buf.append(inline(lines[i].strip()))
                 i += 1
             out.append("<div>" + "<br>".join(buf) + "</div>")
     body = "".join(out)
     return f"<div style='text-align:left'>{body}</div>" if left else body
+
+
+def example_text(e: dict, with_analysis: bool = False) -> str:
+    """把 extract_examples.py 抽出的一道例题排成卡片文本（标记语法）：完整题干、选项、答案、书里的方法论提示。"""
+    title = f"**【{e['label']}】（{e['source']}）**" if e.get("source") else f"**【{e['label']}】**"
+    parts = [title, e["stem"]]
+    parts += e["options"]
+    if e.get("answer"):
+        parts.append(f"**答案：{e['answer']}**")
+    if with_analysis and e.get("analysis"):
+        parts.append(f"^^【解析】^^{e['analysis']}")
+    if e.get("hint"):
+        parts.append(f"^^【方法论提示】^^{e['hint']}")
+    return "\n".join(parts)
 
 
 def load_cards(paths: list[Path]) -> list[dict]:
@@ -179,6 +222,8 @@ def main() -> None:
     ap.add_argument("--deck", required=True)
     ap.add_argument("--out", required=True, type=Path)
     ap.add_argument("--source", type=Path, help="全书文本（extract.py 生成的 full_text.txt），用于核对 evidence")
+    ap.add_argument("--examples", type=Path, help="extract_examples.py 生成的 examples.json；卡片里用 \"examples\": [id,…] 引用")
+    ap.add_argument("--with-analysis", action="store_true", help="例题里同时放书里的“解析”（默认只放 题干、选项、答案、方法论提示）")
     ap.add_argument("--notetype", default="Basic")
     ap.add_argument("--profile", choices=["memory", "method"], default="memory",
                     help="memory=记忆型（一点一卡，答案短）；method=方法论型（体系卡，答案可长）")
@@ -192,6 +237,9 @@ def main() -> None:
         a.max_back = 1800 if a.profile == "method" else 400
 
     cards = load_cards(a.inputs)
+    ex_by_id: dict[str, dict] = {}
+    if a.examples:
+        ex_by_id = {e["id"]: e for e in json.loads(a.examples.read_text("utf-8"))}
     book = norm_for_match(a.source.read_text("utf-8")) if a.source else None
 
     errors: list[str] = []
@@ -218,8 +266,6 @@ def main() -> None:
 
         if len(front) > a.max_front:
             warns.append(f"{w} 问题过长（{len(front)}字），可能不是单一知识点：{front[:30]}…")
-        if len(back) > a.max_back:
-            warns.append(f"{w} 答案过长（{len(back)}字），考虑拆成多张：{front[:30]}")
         hit = [x for x in CONTEXT_WORDS if x in front]
         if hit:
             warns.append(f"{w} 问题依赖上下文（含“{hit[0]}”），脱离书本会看不懂：{front[:30]}")
@@ -252,13 +298,25 @@ def main() -> None:
                 else:
                     ev_ok += 1
 
+        if len(back) > a.max_back:  # 只算手写部分，不含自动排入的例题
+            warns.append(f"{w} 答案过长（{len(back)}字），考虑拆成多张：{front[:30]}")
+        ex_ids = c.get("examples") or []
+        if ex_ids:
+            missing = [x for x in ex_ids if x not in ex_by_id]
+            if missing:
+                errors.append(f"{w} 找不到例题 {missing}（要用 --examples 指定 examples.json）")
+            exs = [example_text(ex_by_id[x], a.with_analysis) for x in ex_ids if x in ex_by_id]
+            if exs:
+                back = back.rstrip() + "\n\n# 例题（共 %d 道）\n" % len(exs) + "\n\n".join(exs)
+        if a.profile == "method" and not RICH_LINE.search(back):
+            warns.append(f"{w} 答案里没有小标题或列表，部分查看器会把整张卡居中排版：{front[:24]}")
         back_html = to_html(back, left=False)
         if c.get("source"):
             src = html.escape(str(c["source"]), quote=False)
             back_html += f"<div style='margin-top:0.8em;font-size:0.8em;color:gray'>出处：{src}</div>"
         back_html = f"<div style='text-align:left'>{back_html}</div>"
         tags = clean_tags(c.get("tags"))
-        rows.append([to_html(front), back_html, tags])
+        rows.append([to_html(front, left=False), back_html, tags])
         kinds[c.get("kind") or "未标注"] += 1
         for t in tags.split():
             per_tag[t] += 1
