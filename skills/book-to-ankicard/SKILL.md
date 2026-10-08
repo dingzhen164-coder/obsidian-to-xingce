@@ -73,7 +73,7 @@ python3 -I "<本 skill 目录>/scripts/extract.py" "<书文件>" --out "<工作�
 ```
 
 - `kind` 取：`concept` `method` `trigger` `rule` `pitfall` `compare` `number` `example` `system`。
-- `evidence` 必须是**从 `full_text.txt` 里复制的原文**，不要改写、不要概括。
+- `evidence` 必须是**从 `full_text.txt` 里复制的原文**，不要改写、不要概括。PDF 里加粗/变色的词有时会被提取到别的位置，**evidence 尽量选不含强调文字的一段**；脚本对这种情况会给“近似匹配”提示，对照原文看一眼即可。
 - 答案里可用 `\n` 换行、`**加粗**`；不要写 HTML。
 
 ## Step 6 — 校验并导出

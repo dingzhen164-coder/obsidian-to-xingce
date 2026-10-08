@@ -39,6 +39,18 @@ def norm_for_match(s: str) -> str:
     return WS.sub("", s.replace("　", ""))
 
 
+def ngram_coverage(ev: str, book: str, n: int = 4) -> float:
+    """evidence 的 n 元组有多大比例出现在全书里。
+
+    pdftotext 会把加粗/变色的行内文字挪到别处，整句精确匹配会误报；
+    编造的句子则几乎没有 n 元组能在书里找到。
+    """
+    if len(ev) < n:
+        return 1.0 if ev in book else 0.0
+    grams = [ev[i : i + n] for i in range(len(ev) - n + 1)]
+    return sum(1 for g in grams if g in book) / len(grams)
+
+
 def to_html(text: str) -> str:
     """纯文本 → 安全的 Anki HTML：转义、换行、**加粗**。"""
     t = html.escape(text.strip(), quote=False)
@@ -97,11 +109,12 @@ def main() -> None:
 
     errors: list[str] = []
     warns: list[str] = []
+    notes: list[str] = []
     seen: dict[str, str] = {}
     rows = []
     kinds: Counter = Counter()
     per_tag: Counter = Counter()
-    ev_ok = ev_miss = ev_none = 0
+    ev_ok = ev_near = ev_miss = ev_none = 0
 
     for c in cards:
         w = c["_where"]
@@ -132,6 +145,9 @@ def main() -> None:
                 ev_none += 1
             elif norm_for_match(ev) in book:
                 ev_ok += 1
+            elif ngram_coverage(norm_for_match(ev), book) >= 0.8:
+                ev_near += 1
+                notes.append(f"{w} evidence 仅近似匹配（多半是 PDF 提取把强调文字挪了位置），请对照原文看一眼：{front[:30]}")
             else:
                 ev_miss += 1
                 warns.append(f"{w} evidence 在原书中找不到（可能是编造或抄错）：{front[:30]}")
@@ -157,7 +173,7 @@ def main() -> None:
     print(f"已写出 {len(rows)} 张卡 → {a.out}")
     print("类别：" + "，".join(f"{k} {v}" for k, v in kinds.most_common()))
     if book is not None:
-        print(f"原文核对：通过 {ev_ok}，找不到 {ev_miss}，未提供 evidence {ev_none}")
+        print(f"原文核对：精确通过 {ev_ok}，近似匹配 {ev_near}，找不到 {ev_miss}，未提供 evidence {ev_none}")
     top_tags = "，".join(f"{k}:{v}" for k, v in per_tag.most_common(12))
     if top_tags:
         print("标签（前12）：" + top_tags)
@@ -165,6 +181,8 @@ def main() -> None:
         print("错误：" + m)
     for m in warns:
         print("警告：" + m)
+    for m in notes:
+        print("提示：" + m)
     if errors and a.strict:
         sys.exit(1)
 
