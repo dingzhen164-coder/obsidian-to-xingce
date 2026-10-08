@@ -9,7 +9,7 @@
     full_text.txt   全书文本（卡片的 evidence 校验就以它为准）
     metadata.json   字数、页数、检测到的章节（起止行号与字数）
 
-PDF 依赖系统的 pdftotext（poppler）；没有时回退到 pypdf。
+PDF 优先用 PyMuPDF（pip install pymupdf），没有时回退到 pdftotext（poppler），再回退 pypdf。
 """
 import argparse
 import html
@@ -56,7 +56,20 @@ def html_to_text(raw: str) -> str:
 
 
 def read_pdf(path: Path) -> tuple[str, int | None]:
+    """优先用 PyMuPDF（加粗/变色的行内文字不会被挪位置）；没有就退回 pdftotext，再退回 pypdf。"""
+    try:
+        import pymupdf  # type: ignore
+    except ImportError:
+        try:
+            import fitz as pymupdf  # type: ignore
+        except ImportError:
+            pymupdf = None
+    if pymupdf is not None:
+        with pymupdf.open(str(path)) as doc:
+            pages = len(doc)
+            return "\n".join(pg.get_text("text") for pg in doc), pages
     if shutil.which("pdftotext"):
+        print("提示：未安装 PyMuPDF，改用 pdftotext（加粗字可能被挪位置）。建议 pip install pymupdf", file=sys.stderr)
         r = subprocess.run(
             ["pdftotext", "-enc", "UTF-8", str(path), "-"],
             capture_output=True, check=True,
@@ -67,7 +80,7 @@ def read_pdf(path: Path) -> tuple[str, int | None]:
     try:
         from pypdf import PdfReader  # type: ignore
     except ImportError:
-        sys.exit("提取 PDF 需要 pdftotext（poppler-utils）或 pypdf，请先安装其一。")
+        sys.exit("提取 PDF 需要 PyMuPDF（pip install pymupdf）、pdftotext（poppler-utils）或 pypdf，请先安装其一。")
     reader = PdfReader(str(path))
     return "\n".join((pg.extract_text() or "") for pg in reader.pages), len(reader.pages)
 

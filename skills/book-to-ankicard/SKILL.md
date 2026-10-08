@@ -33,8 +33,16 @@ python3 -I "<本 skill 目录>/scripts/extract.py" "<书文件>" --out "<工作�
 ```
 
 产出 `full_text.txt` 与 `metadata.json`（字数、页数、章节候选）。**以 `Workdir ->` 打印的路径为准**，不要假设固定位置。
-- PDF 靠 `pdftotext`；扫描版 PDF（提取出来几乎没字）无法处理，告诉用户需要先 OCR。
+- PDF 优先用 PyMuPDF（`pip install pymupdf`，加粗/变色字不会被挪位置），没有时退回 `pdftotext`；扫描版 PDF（提取出来几乎没字）无法处理，告诉用户需要先 OCR。
 - 图片、图表、思维导图不会被读取——在最终报告里说明。
+
+**书里有例题时，同时抽出例题**（方法论型书基本都要）：
+
+```bash
+python3 -I "<本 skill 目录>/scripts/extract_examples.py" "<书.pdf>" --out "<工作目录>/examples.json"
+```
+
+得到每道例题的完整题干、选项、答案、解析、书里的“方法论提示”，编号形如 `p7-例1`。传 PDF 原文件时按版面切“方法论提示”框，最准确。输出里“缺答案/选项不足/无提示”的几道要抽查。
 
 ## Step 2 — 确认书的类型
 
@@ -72,7 +80,7 @@ python3 -I "<本 skill 目录>/scripts/extract.py" "<书文件>" --out "<工作�
 
 确认后开始。**记忆型**按章处理（章与章独立，规则一致；章数多时可并行，但每个并行单元都要先读 `references/card-design.md`）：取该章原文片段，通读后先列知识点清单，再逐点拆卡，写入 `cards/chNN.jsonl`。
 
-**方法论型**按 **Step 3/4 确认的体系**处理，不按章：每个体系取它在各章的原文片段（用 `grep -n` 定位），先做总览卡，再做各子项卡和跨子项规则卡，写入 `cards/<体系名>.jsonl`。每张卡含“是什么 → 怎么用 → 例题”，例题只取对本卡有代表性的 1–3 道。
+**方法论型**按 **Step 3/4 确认的体系**处理，不按章：每个体系取它在各章的原文片段（用 `grep -n` 定位），先做总览卡，再做各子项卡和跨子项规则卡，写入 `cards/<体系名>.jsonl`。每张卡含“是什么 → 怎么用 → 例题”，**例题 = 书里这一节放的所有例题，完整给出**（按编号引用，不手抄）。
 
 一行一卡：
 
@@ -83,15 +91,20 @@ python3 -I "<本 skill 目录>/scripts/extract.py" "<书文件>" --out "<工作�
 - `kind` 取：`concept` `method` `trigger` `rule` `pitfall` `compare` `number` `example` `system`。
 - `evidence` 必须是**从 `full_text.txt` 里复制的原文**，不要改写、不要概括。PDF 里加粗/变色的词有时会被提取到别的位置，**evidence 尽量选不含强调文字的一段**；脚本对这种情况会给“近似匹配”提示，对照原文看一眼即可。
 - `evidence` 可以是字符串，也可以是字符串列表（一张卡汇总了多处内容时）。
+- `examples`：例题编号列表（来自 `examples.json`）。**不要手抄例题**，只写编号，脚本按“完整题干 + 选项 + 答案 + 方法论提示”排进卡片。
 - `back` 用纯文本 + 排版标记（`# 小标题`、`- 列表`、`| 表格 |`、`> 例题`、`**加粗**`、`==红色加粗==`、空行分段），**不要写 HTML**。完整标记清单见 `scripts/build_tsv.py` 开头。
 
 ## Step 6 — 校验并导出
 
 ```bash
 python3 -I "<本 skill 目录>/scripts/build_tsv.py" "<输出目录>/cards" \
-    --deck "<牌组名>" --out "<输出目录>/<slug>.tsv" --source "<工作目录>/full_text.txt" \
-    --profile method        # 记忆型书用 --profile memory（默认）
+    --deck "<牌组名>" --out "<输出目录>/<slug>.tsv" \
+    --source "<工作目录>/full_text.txt" \
+    --examples "<工作目录>/examples.json" \
+    --profile method
 ```
+
+`--profile`：方法论型书用 `method`，记忆型书用 `memory`（默认）。`--examples` 没有例题的书可省略。
 
 逐条处理警告：
 - **evidence 找不到** → 回原文核对。确有此内容就改成原文写法；原文没有就**删卡**。
