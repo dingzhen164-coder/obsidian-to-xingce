@@ -63,6 +63,9 @@ def zh_to_int(t: str) -> int:
     """一、十二、二十三、101 → 整数；认不出来返回 0。"""
     if t.isdigit():
         return int(t)
+    m = re.match(r"^[零〇一二三四五六七八九十百]+", t)
+    if m and m.group(0) != t and t[len(m.group(0)):].isdigit():
+        t = m.group(0)  # “一1”：OCR 在编号后面多带了一个数字，取前面的汉字编号
     d = {"零": 0, "〇": 0, "一": 1, "二": 2, "三": 3, "四": 4, "五": 5, "六": 6, "七": 7, "八": 8, "九": 9}
     n, cur = 0, 0
     for ch in t:
@@ -1059,7 +1062,10 @@ def main():
             c.pop("_tables_md")
             for name, img in c.pop("_figures").items():
                 (args.out / "media").mkdir(exist_ok=True)
-                cv2.imwrite(str(args.out / "media" / name), img)
+                ok, buf = cv2.imencode(".png", img)  # 不能用 cv2.imwrite：Windows 上路径含中文时它会静默失败
+                if not ok:
+                    sys.exit(f"图片 {name} 编码失败")
+                (args.out / "media" / name).write_bytes(buf.tobytes())
             f.write(json.dumps(c, ensure_ascii=False) + "\n")
     (args.out / "tables.json").write_text(json.dumps(tables, ensure_ascii=False, indent=1), "utf-8")
 
