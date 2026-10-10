@@ -2,12 +2,13 @@
 """扫描版（带 OCR 文字层）法考教材 PDF → 知识点卡片，全程用代码，不花模型 token。
 
 适用的 PDF：每页是一张扫描图，上面叠着不可见的 OCR 文字层（用 PyMuPDF 能读到文字和每个字的位置）。
-这类书的“考点”（知识点）以「考点N：标题」开头，里面有表格、「一、二、三、」小节、[法理与逻辑]/[懂原理]
-等小标签框、脚注 ①②③、随堂练习。
+这类书按“考点”或“知识点”编排：「考点N：标题」或「知识点一 标题」（用 --unit 选，默认自动判断；
+也可以用 --unit-regex 自己写），上面还可以有「第一部分 / 第一章 / 第一节」这样的大标题（只用来做标签和出处，
+并且会截断上一个知识点）。每个知识点里有表格、「一、二、三、」小节、[法理与逻辑]/[注意]等小标签框、脚注 ①②③、随堂练习。
 
 做的事：
-  1. 按「考点N：」标题把整本书（或一个片段）切成一个个考点——页与页之间的内容按阅读顺序接起来，
-     标题之前（上一个考点的尾巴）和下一个考点标题之后的内容都不要。
+  1. 按“考点 / 知识点”标题把整本书（或一个片段）切成一个个知识点——页与页之间的内容按阅读顺序接起来，
+     标题之前（上一个知识点的尾巴）和下一个知识点标题之后的内容都不要；章、部分的标题记成标签。
   2. 表格：用 OpenCV 找出表格线，重建网格和合并单元格（跨行、跨列），再把 OCR 文字按位置放进格子。
      跨页的“续表”自动并回上一张表。重建不出来的表（没有表格线、结构不规则）退回成“裁出来的图片”。
   3. 清洗：去页眉页脚、页码、水印（--drop 指定）、OCR 常见错字（--fixes 指定，默认见 DEFAULT_FIXES）。
@@ -44,7 +45,83 @@ DEFAULT_FIXES = [  # (正则, 替换) —— 只放“几乎不可能是对的�
 ]
 CIRCLED = "①②③④⑤⑥⑦⑧⑨⑩"
 UNIT_START = re.compile(r"^(周岁|岁以上|岁以下|个月|日内|日起|万元|％|%)")
-KAODIAN = re.compile(r"^\s*考点\s*(\d+)\s*[：:]\s*(.+?)\s*$")
+ZH_NUM = "一二三四五六七八九十百零〇"
+UNIT_PRESETS = {  # 名字 → (正则（第 1 组=编号，第 2 组=标题）, 称呼)
+    "kaodian": (r"^\s*考点\s*(\d+)\s*[：:]\s*(.+?)\s*$", "考点"),
+    "zhishidian": (r"^\s*知识点\s*([" + ZH_NUM + r"\d]+)\s*[：:、.．]?\s*(.+?)\s*$", "知识点"),
+}
+# 上一级标题：只用来做标签 / 出处，并截断上一个知识点。(级别, 正则（第 1 组=编号，第 2 组=标题）, 称呼)
+PARENT_PATTERNS = [
+    (1, re.compile(r"^\s*第\s*([" + ZH_NUM + r"\d]+)\s*(部分|编|篇)\s*(.*)$"), None),
+    (2, re.compile(r"^\s*第\s*([" + ZH_NUM + r"\d]+)\s*章\s*(.*)$"), "章"),
+    (3, re.compile(r"^\s*第\s*([" + ZH_NUM + r"\d]+)\s*节\s*(.*)$"), "节"),
+]
+
+
+def zh_to_int(t: str) -> int:
+    """一、十二、二十三、101 → 整数；认不出来返回 0。"""
+    if t.isdigit():
+        return int(t)
+    d = {"零": 0, "〇": 0, "一": 1, "二": 2, "三": 3, "四": 4, "五": 5, "六": 6, "七": 7, "八": 8, "九": 9}
+    n, cur = 0, 0
+    for ch in t:
+        if ch in d:
+            cur = d[ch]
+        elif ch == "十":
+            n += (cur or 1) * 10
+            cur = 0
+        elif ch == "百":
+            n += (cur or 1) * 100
+            cur = 0
+        else:
+            return 0
+    return n + cur
+
+
+class Unit:
+    """“知识点”标题的识别器。match(文本) → (编号, 标题) 或 None。"""
+
+    def __init__(self, regex: str, label: str):
+        self.rx = re.compile(regex)
+        self.label = label
+
+    def match(self, text: str):
+        m = self.rx.match(text)
+        if not m or len(text) > 60:
+            return None
+        no = zh_to_int(m.group(1))
+        return (no, m.group(2).strip()) if no else None
+
+
+def pick_unit(lines_text: list[str], name: str, custom: str | None, label: str | None) -> Unit:
+    if custom:
+        return Unit(custom, label or "知识点")
+    if name != "auto":
+        return Unit(*UNIT_PRESETS[name])
+    best, best_n = None, 0
+    for key, (rx, lab) in UNIT_PRESETS.items():
+        u = Unit(rx, lab)
+        n = sum(1 for t in lines_text if u.match(t))
+        if n > best_n:
+            best, best_n = u, n
+    if not best:
+        sys.exit("没认出知识点标题。试试 --unit kaodian / zhishidian，或者用 --unit-regex 自己写（两个分组：编号、标题）。")
+    return best
+
+
+def match_parent(text: str):
+    """章 / 部分标题 → (级别, 编号文字, 标题全文)；不是则 None。"""
+    t = text.strip()
+    if len(t) > 40:
+        return None
+    for level, rx, _lab in PARENT_PATTERNS:
+        m = rx.match(t)
+        if m:
+            return level, t
+    return None
+
+
+UNIT: Unit = Unit(*UNIT_PRESETS["kaodian"])  # main() 里按书重新设置
 SECTION = re.compile(r"^\s*([一二三四五六七八九十]+)、\s*(.+?)\s*$")
 BOX_LABEL = re.compile(r"^\s*[\[［【「]\s*([\u4e00-\u9fff]{2,6})\d*\s*[\]］】」]?\s*(.*)$")
 OPTION = re.compile(r"(?<![A-Za-z0-9])([A-D])\s*[.．、]\s*(?=\S)")
@@ -212,9 +289,10 @@ class Table:
             lines.append("")
             start = 1
         if start < nrow:
-            lines.append("| " + " | ".join(grid[start]) + " |")
+            has_header = self.header_rows > start
+            lines.append("| " + " | ".join(grid[start] if has_header else [" "] * ncol) + " |")
             lines.append("|" + "|".join(["---"] * ncol) + "|")
-            for r in range(start + 1, nrow):
+            for r in range(start if not has_header else start + 1, nrow):
                 lines.append("| " + " | ".join(grid[r]) + " |")
         return "\n".join(lines)
 
@@ -271,7 +349,7 @@ def detect_tables(page: Page, clean: Cleaner) -> list[Table]:
 
     tables = []
     for gh, gv in groups.values():
-        if len(gh) < 3 or len(gv) < 2:
+        if len(gh) < 3 or len(gv) < 1:
             continue
         x0 = min(min(h[0] for h in gh), min(v[0] for v in gv))
         x1 = max(max(h[2] for h in gh), max(v[0] for v in gv))
@@ -279,10 +357,17 @@ def detect_tables(page: Page, clean: Cleaner) -> list[Table]:
         y1 = max(max(h[1] for h in gh), max(v[2] for v in gv))
         if (x1 - x0) < W * 0.5:  # 太窄：多半是示意图里的线
             continue
+        # 只有一条竖线（标签列 | 内容列这种）时，这条竖线必须贯穿整张表；否则可能只是汉字笔画碰巧挨着横线
+        if len(gv) < 2 and max(v[2] - v[1] for v in gv) < 0.6 * (y1 - y0):
+            continue
         # 表格最上面/最下面的粗线常常不碰竖线（题注行在它下面）：把附近又宽又长的横线也算进来
         tw = x1 - x0
+        # 但中间隔着“知识点 / 章 / 一、”这类标题行的横线不算（那是上一块内容的线，标题不能被吞进表格）
+        heads_y = [(ln["y0"] + ln["y1"]) / 2 * page.scale for ln in page.lines
+                   if UNIT.match(ln["text"]) or SECTION.match(ln["text"]) or match_parent(ln["text"])]
         extra = [h for h in hs if h not in gh and h[2] - h[0] >= 0.8 * tw and y0 - 160 <= h[1] <= y1 + 60
-                 and h[0] >= x0 - 30 and h[2] <= x1 + 30]
+                 and h[0] >= x0 - 30 and h[2] <= x1 + 30
+                 and not any(h[1] < hy < y0 for hy in heads_y)]
         gh = gh + extra
         y0 = min(y0, *[h[1] for h in extra]) if extra else y0
         y1 = max(y1, *[h[1] for h in extra]) if extra else y1
@@ -373,12 +458,13 @@ def detect_tables(page: Page, clean: Cleaner) -> list[Table]:
         if not rect_ok:
             tb.note = "合并单元格不是规则矩形，表格结构可能不对"
         tb.cells.sort(key=lambda c: (c["r0"], c["c0"]))
-        # 表头行数：题注行（整行合并）+ 紧接着的一行
-        tb.header_rows = 0
-        if tb.caption():
-            tb.header_rows = 2
-        else:
-            tb.header_rows = 1
+        # 表头行数：题注行（整行合并）；其后第一行像表头（≥3 列、每格都很短、下面的格子更长）才算表头
+        cap = 1 if tb.caption() else 0
+        first = [c for c in tb.cells if c["r0"] == cap]
+        later = [c for c in tb.cells if c["r0"] > cap]
+        looks_header = (ncol >= 3 and first and all(len(c["text"]) <= 12 for c in first)
+                        and any(len(c["text"]) > 12 for c in later))
+        tb.header_rows = cap + (1 if looks_header else 0)
         tables.append(tb)
     tables.sort(key=lambda t: t.bbox_px[1])
     return tables
@@ -414,7 +500,7 @@ def detect_figures(page: Page, tables: list[Table]):
         right = max(sg[0] + sg[2] for sg in segs) + 20
         for ln in page.lines:  # 与这个高度重叠的文字行：整行都算进图里
             cy = (ln["y0"] + ln["y1"]) / 2 * sc
-            if top <= cy <= bot and len(ln["text"]) <= 40 and not KAODIAN.match(ln["text"]):
+            if top <= cy <= bot and len(ln["text"]) <= 40 and not UNIT.match(ln["text"]):
                 left = min(left, int(ln["x0"] * sc) - 10)
                 right = max(right, int(ln["x1"] * sc) + 10)
         boxes.append((max(0, left), max(0, top), min(W, right), min(H, bot)))
@@ -479,7 +565,7 @@ def build_cards(doc, args, clean: Cleaner):
             if any(t.bbox_px[0] - 6 <= cx <= t.bbox_px[2] + 6 and t.bbox_px[1] - 6 <= cy <= t.bbox_px[3] + 6 for t in tabs):
                 continue
             if any(fb[0] - 20 <= cx <= fb[2] + 20 and fb[1] - 10 <= cy <= fb[3] + 10 for fb in figs) \
-                    and not KAODIAN.match(ln["text"]) and not SECTION.match(ln["text"]):
+                    and not UNIT.match(ln["text"]) and not SECTION.match(ln["text"]):
                 continue
             stream.append({"kind": "line", "page": pg.index, "y": ln["y0"], "x0": ln["x0"], "x1": ln["x1"],
                            "text": ln["text"], "w": pg.w, "h": pg.h})
@@ -490,9 +576,18 @@ def build_cards(doc, args, clean: Cleaner):
     for pg in pages:
         xs0 = sorted(l["x0"] for l in pg.lines if len(l["text"]) > 8)
         margins[pg.index] = xs0[int(len(xs0) * 0.15)] if xs0 else 0
+    # 脚注判定要“有引用”：页面里别处（正文、表格格子）出现了这个 ①②… 记号；
+    # 只在行首出现的 ①②③ 是列表序号（如“［注意］①…②…③…”），不是脚注
+    refs: dict[int, set] = {}
+    for pg in pages:
+        first_of_line = {}
+        for c in pg.chars:
+            first_of_line.setdefault(c[5], c)
+        refs[pg.index] = {c[0] for c in pg.chars if c[0] in CIRCLED and first_of_line[c[5]] is not c}
     for e in stream:
         if e["kind"] == "line":
             e["indent"] = e["x0"] > margins[e["page"]] + 8
+            e["refs"] = refs[e["page"]]
     stream.sort(key=lambda e: (e["page"], e["y"]))
 
     # 页眉页脚、页码、水印
@@ -509,30 +604,50 @@ def build_cards(doc, args, clean: Cleaner):
             e["text"] = txt
         kept.append(e)
 
-    # 切分考点
-    segs = []  # [(no, title, [elements])]
+    # 切分知识点；章 / 部分标题记成上下文，并截断上一个知识点
+    segs = []  # [{'no','title','ctx','els'}]
     cur = None
+    ctx: dict[int, str] = {}
+    orphan: dict[str, int] = defaultdict(int)  # 章 / 部分标题之后、第一个知识点之前的文字行数
+    last_parent = ""
     for e in kept:
         if e["kind"] == "line":
-            m = KAODIAN.match(e["text"])
+            m = UNIT.match(e["text"])
             if m:
-                cur = (int(m.group(1)), m.group(2), [])
+                cur = {"no": m[0], "title": m[1], "ctx": [ctx[k] for k in sorted(ctx)], "els": []}
                 segs.append(cur)
                 continue
+            par = match_parent(e["text"])
+            if par:
+                level, full = par
+                ctx[level] = full
+                for deeper in [k for k in ctx if k > level]:
+                    del ctx[deeper]
+                cur = None
+                last_parent = full
+                continue
         if cur is not None:
-            cur[2].append(e)
+            cur["els"].append(e)
+        elif e["kind"] == "line" and last_parent:
+            orphan[last_parent] += 1
 
     cards, report = [], []
-    for no, title, els in segs:
-        if args.only and no not in args.only:
+    for seg in segs:
+        if args.only and seg["no"] not in args.only:
             continue
-        card, notes = assemble(no, title, els, args, clean)
+        card, notes = assemble(seg, len(cards) + 1, args, clean)
         cards.append(card)
-        report.append((no, title, notes))
+        report.append((card["front"], notes))
+    if orphan:
+        report.append(("（章 / 部分开头没有归入任何知识点的文字，没有做进卡片）",
+                       [f"“{k}”下面、第一个知识点之前有 {v} 行文字（比如这一章的总说明）" for k, v in orphan.items()]))
     return cards, report
 
 
-def assemble(no, title, els, args, clean):
+def assemble(seg, idx, args, clean):
+    no, title, els = seg["no"], seg["title"], seg["els"]
+    uid = f"u{idx:03d}"
+    unit_label = UNIT.label
     notes: list[str] = []
     figures: dict[str, "np.ndarray"] = {}
     tables_html: dict[str, str] = {}
@@ -547,7 +662,7 @@ def assemble(no, title, els, args, clean):
     foot = {}  # (page, 序号) -> 文本
     body = []
     for e in els:
-        if e["kind"] == "line" and e["y"] > e["h"] * 0.82 and e["text"][:1] in CIRCLED:
+        if e["kind"] == "line" and e["y"] > e["h"] * 0.82 and e["text"][:1] in CIRCLED and e["text"][0] in e.get("refs", ()):
             foot[(e["page"], e["text"][0])] = re.sub(r"(?<=[。；）)])\s*\d{1,3}$", "", e["text"])
             e["foot"] = True
             if e["x1"] > e["w"] - 5:
@@ -579,6 +694,8 @@ def assemble(no, title, els, args, clean):
         if para:
             text = clean(join_lines(para))
             text = re.sub(r"^[（(](\d+)[）)]\s*", r"\1. ", text)  # （1）… → 1. …
+            if text.count("\n") == 0 and len(re.findall(r"[②-⑩]", text)) >= 1 and text.startswith("①"):
+                text = re.sub(r"(?<=[。；;])\s*(?=[②-⑩])", "\n", text)  # ①②③ 是并列条目：各占一行
             md.append(text)
             para = []
 
@@ -616,7 +733,7 @@ def assemble(no, title, els, args, clean):
             fx0, fy0, fx1, fy1 = e["box"]
             im = e["pg"].img
             crop = im[max(0, fy0 - 8): fy1 + 4, max(0, fx0 - 12): fx1 + 12]
-            name = f"考点{no}-图{len(figures) + 1}.png"
+            name = f"{uid}-图{len(figures) + 1}.png"
             figures[name] = crop
             md.append(f"[[img:{name}]]")
             notes.append(f"示意图 {name} 没法转成文字，已裁成图片放进卡片（需要把图片文件拷进 Anki 的 collection.media 或你的库）")
@@ -628,7 +745,7 @@ def assemble(no, title, els, args, clean):
             flush_para()
             flush_exercise()
             tcount += 1
-            tid = f"t{no}-{tcount}"
+            tid = f"{uid}-t{tcount}"
             tables_html[tid] = t.to_html()
             tables_md[tid] = t.to_markdown()
             md.append(f"[[table:{tid}]]")
@@ -692,11 +809,19 @@ def assemble(no, title, els, args, clean):
         md.extend(notes_md)
 
     back = "\n".join(md)
+    chapter = ""
+    for c in reversed(seg["ctx"]):
+        if "章" in c[:6] or "节" in c[:6]:
+            chapter = c
+            break
+    path = " · ".join(seg["ctx"])
+    short = re.match(r"^(第[" + ZH_NUM + r"\d]+(?:部分|编|篇|章|节))", seg["ctx"][-1]).group(1) if seg["ctx"] else ""
+    tags = [t for t in (args.subject, f"{unit_label}{no}", re.sub(r"\s+", "_", chapter)) if t]
     card = {
-        "front": f"【{args.subject}·考点{no}】{title}",
+        "front": f"【{args.subject}·{short + unit_label if short else unit_label}{no}】{title}".replace("··", "·"),
         "back": back,
-        "tags": [args.subject, f"考点{no}"],
-        "source": f"{args.subject} 考点{no}",
+        "tags": tags,
+        "source": " · ".join(x for x in (args.subject, path, f"{unit_label}{no}") if x),
         "kind": "knowledge_point",
         "_figures": figures,
         "_tables_html": tables_html,
@@ -710,7 +835,11 @@ def main():
     ap.add_argument("pdf", type=Path)
     ap.add_argument("--out", type=Path, required=True)
     ap.add_argument("--subject", default="")
-    ap.add_argument("--only", help="只处理这些考点号，逗号分隔，如 4,5")
+    ap.add_argument("--unit", choices=["auto", *UNIT_PRESETS], default="auto",
+                    help="知识点标题的写法：kaodian=「考点4：标题」，zhishidian=「知识点一 标题」，auto=自动判断（默认）")
+    ap.add_argument("--unit-regex", help="自己写知识点标题的正则（两个分组：编号、标题），例如 '^\\s*专题\\s*(\\d+)\\s+(.+)$'")
+    ap.add_argument("--unit-label", help="配合 --unit-regex：知识点的称呼，如 专题（默认 知识点）")
+    ap.add_argument("--only", help="只处理这些编号的知识点，逗号分隔，如 4,5（各章里编号相同的都会处理）")
     ap.add_argument("--drop", default="", help="要从文字里删掉的水印/广告词，逗号分隔（追加到默认列表）")
     ap.add_argument("--fixes", type=Path, help="OCR 错字对照表：每行 正则<TAB>替换，追加到默认列表")
     args = ap.parse_args()
@@ -725,6 +854,10 @@ def main():
     clean = Cleaner(DEFAULT_DROP + [d.strip() for d in args.drop.split(",")], fixes)
 
     doc = pymupdf.open(str(args.pdf))
+    global UNIT
+    texts = [clean(ln.strip()) for pg in doc for ln in pg.get_text("text").splitlines()]
+    UNIT = pick_unit(texts, args.unit, args.unit_regex, args.unit_label)
+    print(f"知识点标题按「{UNIT.label}」识别（{UNIT.rx.pattern}）")
     cards, report = build_cards(doc, args, clean)
     args.out.mkdir(parents=True, exist_ok=True)
     (args.out / "cards").mkdir(exist_ok=True)
@@ -739,17 +872,16 @@ def main():
             f.write(json.dumps(c, ensure_ascii=False) + "\n")
     (args.out / "tables.json").write_text(json.dumps(tables, ensure_ascii=False, indent=1), "utf-8")
 
-    lines = [f"# 转换报告：{args.pdf.name}", "", f"共 {len(cards)} 个考点，{len(tables)} 张表格。", ""]
-    for no, title, notes in report:
-        lines.append(f"## 考点{no} {title}")
+    lines = [f"# 转换报告：{args.pdf.name}", "", f"共 {len(cards)} 个{UNIT.label}，{len(tables)} 张表格。", ""]
+    for front, notes in report:
+        lines.append(f"## {front}")
         lines += [f"- ⚠ {n}" for n in notes] or ["- 没有需要人工看的地方"]
     if clean.applied:
         lines += ["", "## 自动改过的 OCR 错字", *[f"- {k}（{v} 处）" for k, v in clean.applied.items()]]
     (args.out / "report.md").write_text("\n".join(lines), "utf-8")
-    print(f"考点 {len(cards)} 个，表格 {len(tables)} 张 → {args.out}")
-    for no, title, notes in report:
-        print(f"  考点{no} {title}：{'⚠ ' + '；'.join(notes) if notes else 'OK'}")
-
+    print(f"{UNIT.label} {len(cards)} 个，表格 {len(tables)} 张 → {args.out}")
+    for front, notes in report:
+        print(f"  {front}：{'⚠ ' + '；'.join(notes) if notes else 'OK'}")
 
 if __name__ == "__main__":
     main()

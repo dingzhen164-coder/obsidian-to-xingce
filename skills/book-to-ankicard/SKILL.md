@@ -27,11 +27,12 @@ description: 把一本书（PDF、EPUB、DOCX、Markdown、TXT）拆成以知识
 
 ### 代码式：扫描版 / OCR 教材 PDF → 知识点卡片
 
-适用 PDF：每页是扫描图，上面叠着不可见的 OCR 文字层，章节以「考点N：标题」开头。依赖：`pip install pymupdf opencv-python-headless numpy`。
+适用 PDF：每页是扫描图，上面叠着不可见的 OCR 文字层，知识点标题可以是「考点N：标题」或「知识点一 标题」（上面还可以有「第一部分 / 第一章 / 第一节」）。依赖：`pip install pymupdf opencv-python-headless numpy`。
 
 ```bash
 # 1. 整本（或一个片段）切成考点，重建表格，清洗，拼成卡
 python3 -I "<本 skill 目录>/scripts/pdf_to_cards.py" "<教材.pdf>" --out "<输出目录>" --subject 民法 \
+    [--unit auto|kaodian|zhishidian] [--unit-regex "正则(编号)(标题)"] [--unit-label 考点] \
     [--only 4,5] [--drop "水印词1,水印词2"] [--fixes 错字对照.tsv]
 
 # 2. 导出 .tsv（--table-format html=真表格，list=拆成列表；图片复制到输出旁的 media/）
@@ -41,7 +42,7 @@ python3 -I "<本 skill 目录>/scripts/build_tsv.py" "<输出目录>/cards" --de
 ```
 
 脚本做的事：
-- **切考点**：按「考点N：」标题切；标题前（上一个考点的尾巴）和下一个标题后的内容不要；跨页按阅读顺序接起来。
+- **切知识点**：`--unit auto`（默认）自动判断标题是「考点N：」还是「知识点N」；都不是就用 `--unit-regex` 自己写（两个分组：编号、标题）。「第N部分/编/篇」「第N章」「第N节」自动识别为上级标题：它们截断上一个知识点，并写进卡片正面前缀、标签和出处。章/部分开头、第一个知识点之前的总说明不做卡，只在报告里提醒。标题前（上一个考点的尾巴）和下一个标题后的内容不要；跨页按阅读顺序接起来。
 - **表格**：用 OpenCV 找表格线，重建网格和**合并单元格（跨行、跨列）**，把 OCR 字按位置放进格子；跨页“续表”并回上一张；重建不了的退回成图片。
 - **示意图 / 思维导图**：按树形连接线定位，裁成图片放进卡片（`[[img:…]]`）。
 - **清洗**：页眉页脚、页码、水印（`--drop`，可加正则）；OCR 常见错字（`自已→自己` 等，对照表可用 `--fixes` 追加；**数字、法条号绝不自动改**）。
