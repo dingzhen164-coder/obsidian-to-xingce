@@ -29,6 +29,10 @@ description: 把一本书（PDF、EPUB、DOCX、Markdown、TXT）拆成以知识
 
 适用 PDF：每页是扫描图，上面叠着不可见的 OCR 文字层，知识点标题可以是「考点N：标题」或「知识点一 标题」（上面还可以有「第一部分 / 第一章 / 第一节」）。依赖：`pip install pymupdf opencv-python-headless numpy`。
 
+一键版（macOS / Linux，首次自动装依赖）：`./pdf2anki.sh 教材.pdf 科目名 [额外参数]`，输出在 PDF 旁的 `<PDF名>_anki/`。
+
+分步版：
+
 ```bash
 # 1. 整本（或一个片段）切成考点，重建表格，清洗，拼成卡
 python3 -I "<本 skill 目录>/scripts/pdf_to_cards.py" "<教材.pdf>" --out "<输出目录>" --subject 民法 \
