@@ -50,6 +50,9 @@ ZH_NUM = "一二三四五六七八九十百零〇"
 UNIT_PRESETS = {  # 名字 → (正则（第 1 组=编号，第 2 组=标题）, 称呼)
     "kaodian": (r"^\s*考点\s*(\d+)\s*[：:]\s*(.+?)\s*$", "考点"),
     "zhishidian": (r"^\s*知识点\s*([" + ZH_NUM + r"\d]+)\s*[：:、.．]?\s*(.+?)\s*$", "知识点"),
+    # 法理学这类没有“知识点”标题的书：「第一章 / 第一节」下面直接是「一、法概念的争议」「二、…」——一个小节做一张卡。
+    # 容易和正文里的「一、二、」撞，所以不参与自动判断，只在前两种一个都没认出来时才自动用，或手动选
+    "xiaojie": (r"^\s*([" + ZH_NUM + r"]+)\s*[、，,．.]\s*(.+?)\s*$", "小节"),
 }
 # 上一级标题：只用来做标签 / 出处，并截断上一个知识点。(级别, 正则（第 1 组=编号，第 2 组=标题）, 称呼)
 PARENT_PATTERNS = [
@@ -104,10 +107,16 @@ def pick_unit(lines_text: list[str], name: str, custom: str | None, label: str |
         return Unit(*UNIT_PRESETS[name])
     best, best_n = None, 0
     for key, (rx, lab) in UNIT_PRESETS.items():
+        if key == "xiaojie":
+            continue
         u = Unit(rx, lab)
         n = sum(1 for t in lines_text if u.match(t))
         if n > best_n:
             best, best_n = u, n
+    if not best:
+        u = Unit(*UNIT_PRESETS["xiaojie"])
+        if sum(1 for t in lines_text if u.match(t)) >= 3:
+            best = u
     if not best:
         sys.exit("没认出知识点标题。试试 --unit kaodian / zhishidian，或者用 --unit-regex 自己写（两个分组：编号、标题）。")
     return best
