@@ -11,13 +11,24 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 
 
+SUBJECTS = ["三国法", "理论法", "法理学", "民事诉讼法", "刑事诉讼法", "民诉", "刑诉", "民法", "刑法", "行政法", "商经知", "商经", "宪法", "法制史", "职业道德", "国际法", "国际私法", "国际经济法"]
+
+
+def guess_subject(stem: str) -> str:
+    """从文件名里认科目；认不出来就取文件名前 10 个字（不要把整个长文件名放进卡片正面）。"""
+    for s in SUBJECTS:
+        if s in stem:
+            return s
+    return stem[:10]
+
+
 def main() -> int:
     if len(sys.argv) < 2 or not Path(sys.argv[1]).is_file():
         print(__doc__)
         return 1
     pdf = Path(sys.argv[1]).resolve()
     rest = sys.argv[2:]
-    subject = pdf.stem
+    subject = guess_subject(pdf.stem)
     if rest and not rest[0].startswith("--"):
         subject, rest = rest[0], rest[1:]
     out = pdf.parent / f"{pdf.stem}_anki"
