@@ -92,18 +92,57 @@ def table_to_items(rows: list[list[str]]) -> list[str]:
     """
     if not rows:
         return []
-    head, body = rows[0], rows[1:]
-    if len(body) == 1 and len(head) >= 2:
-        return [f"**{h}**：{v}" for h, v in zip(head, body[0])]
-    items = []
+    head, body = list(rows[0]), [list(r) for r in rows[1:]]
+    n = len(head)
+    for i in range(1, n):  # 表头里被左边盖住的格子（“⇢”/“〃”）= 和左边同一个表头
+        if head[i] in ("⇢", "〃"):
+            head[i] = head[i - 1]
+    body = [r + [""] * (n - len(r)) for r in body]
+    if len(body) == 1 and n >= 2:
+        return [f"**{h}**：{v}" for h, v in zip(head, body[0]) if v not in ("⇢", "〃")]
+
+    def merge(cols):  # 同名表头相邻：值接在一起（“效力”下分“有效/无效”两列）
+        pairs: list[list[str]] = []
+        for h, v in cols:
+            if pairs and pairs[-1][0] == h:
+                if v != pairs[-1][1]:
+                    pairs[-1][1] += "：" + v
+            else:
+                pairs.append([h, v])
+        return pairs
+
+    # 第一列是“〃”的行，属于上一行的同一组（上面那一格跨了行）
+    groups: list[list[list[str]]] = []
     for r in body:
-        if len(r) == 1:
-            items.append(r[0])
-        elif len(r) == 2:
-            items.append(f"**{r[0]}**：{r[1]}")
+        if r[0] != "〃" or not groups:
+            groups.append([r])
         else:
-            rest = "；".join(f"{h}：{v}" for h, v in zip(head[1:], r[1:]))
-            items.append(f"**{r[0]}**（{rest}）")
+            groups[-1].append(r)
+    items = []
+    for g in groups:
+        # 整组都盖着的列 = 组级信息（只在组内第一行写）；只盖了几行的列 = 行级信息（往下抄）
+        group_level = {j for j in range(1, n) if len(g) > 1 and all(rr[j] == "〃" for rr in g[1:])}
+        prev = None
+        for k, rr in enumerate(g):
+            cur = list(rr)
+            for j in range(n):
+                if cur[j] == "〃" and prev is not None and j not in group_level and j != 0:
+                    cur[j] = prev[j]
+            prev = cur
+            cols = [(head[j], cur[j]) for j in range(n)
+                    if cur[j] not in ("⇢", "〃") and not (k > 0 and (j == 0 or j in group_level))]
+            pairs = merge(cols)
+            if not pairs:
+                continue
+            if k > 0:
+                items.append("↳ " + "；".join(f"{h}：{v}" for h, v in pairs))
+            elif len(pairs) == 1:
+                items.append(pairs[0][1])
+            elif len(pairs) == 2:
+                items.append(f"**{pairs[0][1]}**：{pairs[1][1]}")
+            else:
+                rest = "；".join(f"{h}：{v}" for h, v in pairs[1:])
+                items.append(f"**{pairs[0][1]}**（{rest}）")
     return items
 
 
@@ -224,6 +263,10 @@ def main() -> None:
     ap.add_argument("--source", type=Path, help="全书文本（extract.py 生成的 full_text.txt），用于核对 evidence")
     ap.add_argument("--examples", type=Path, help="extract_examples.py 生成的 examples.json；卡片里用 \"examples\": [id,…] 引用")
     ap.add_argument("--with-analysis", action="store_true", help="例题里同时放书里的“解析”（默认只放 题干、选项、答案、方法论提示）")
+    ap.add_argument("--tables", type=Path, help="pdf_to_cards.py 生成的 tables.json；卡片里的 [[table:ID]] 由它填充")
+    ap.add_argument("--table-format", choices=["html", "list"], default="html",
+                    help="html=真正的表格（Anki 里正常；“玉简”需要 3.4 以后支持表格的版本）；list=拆成列表（任何查看器都能看）")
+    ap.add_argument("--media-dir", type=Path, help="卡片里 [[img:文件名]] 引用的图片所在目录；会复制到输出文件旁的 media/")
     ap.add_argument("--notetype", default="Basic")
     ap.add_argument("--profile", choices=["memory", "method"], default="memory",
                     help="memory=记忆型（一点一卡，答案短）；method=方法论型（体系卡，答案可长）")
@@ -237,6 +280,8 @@ def main() -> None:
         a.max_back = 1800 if a.profile == "method" else 400
 
     cards = load_cards(a.inputs)
+    tables_by_id: dict = json.loads(a.tables.read_text("utf-8")) if a.tables else {}
+    media_used: set[str] = set()
     ex_by_id: dict[str, dict] = {}
     if a.examples:
         ex_by_id = {e["id"]: e for e in json.loads(a.examples.read_text("utf-8"))}
@@ -269,7 +314,7 @@ def main() -> None:
         hit = [x for x in CONTEXT_WORDS if x in front]
         if hit:
             warns.append(f"{w} 问题依赖上下文（含“{hit[0]}”），脱离书本会看不懂：{front[:30]}")
-        if "？" not in front and "?" not in front and not front.endswith(("是", "为", "：", ":")):
+        if c.get("kind") != "knowledge_point" and "？" not in front and "?" not in front and not front.endswith(("是", "为", "：", ":")):
             warns.append(f"{w} 问题不像问句，建议改成明确提问：{front[:30]}")
 
         evs = c.get("evidence") or []
@@ -310,7 +355,32 @@ def main() -> None:
                 back = back.rstrip() + "\n\n# 例题（共 %d 道）\n" % len(exs) + "\n\n".join(exs)
         if a.profile == "method" and not RICH_LINE.search(back):
             warns.append(f"{w} 答案里没有小标题或列表，部分查看器会把整张卡居中排版：{front[:24]}")
+        raws: dict[str, str] = {}
+
+        def put_raw(html_str: str) -> str:
+            key = f"@@RAW{len(raws)}@@"
+            raws[key] = html_str
+            return key
+
+        def sub_table(m):
+            tid = m.group(1)
+            t = tables_by_id.get(tid)
+            if not t:
+                errors.append(f"{w} 找不到表格 {tid}（要用 --tables 指定 tables.json）")
+                return ""
+            if a.table_format == "html":
+                return put_raw(t["html"])
+            return t["md"]  # list：交给下面的“| 表格 |”标记，转成列表
+
+        def sub_img(m):
+            media_used.add(m.group(1))
+            return put_raw(f"<div><img src='{html.escape(m.group(1), quote=True)}' style='max-width:100%'></div>")
+
+        back = re.sub(r"\[\[table:([^\]]+)\]\]", sub_table, back)
+        back = re.sub(r"\[\[img:([^\]]+)\]\]", sub_img, back)
         back_html = to_html(back, left=False)
+        for key, val in raws.items():
+            back_html = back_html.replace(f"<div>{key}</div>", val).replace(key, val)
         if c.get("source"):
             src = html.escape(str(c["source"]), quote=False)
             back_html += f"<div style='margin-top:0.8em;font-size:0.8em;color:gray'>出处：{src}</div>"
@@ -329,6 +399,21 @@ def main() -> None:
         w_ = csv.writer(fh, delimiter="\t", quoting=csv.QUOTE_MINIMAL, lineterminator="\n")
         w_.writerows(rows)
 
+    if media_used:
+        if a.media_dir:
+            dst = a.out.parent / "media"
+            dst.mkdir(parents=True, exist_ok=True)
+            import shutil
+            for name in sorted(media_used):
+                src = a.media_dir / name
+                if src.is_file():
+                    if src.resolve() != (dst / name).resolve():
+                        shutil.copy2(src, dst / name)
+                else:
+                    errors.append(f"找不到图片 {src}")
+            print(f"图片 {len(media_used)} 张已复制到 {dst} —— Anki：拷进 collection.media；玉简：放进库里任意位置（按文件名找）")
+        else:
+            print(f"提示：卡片引用了 {len(media_used)} 张图片（{', '.join(sorted(media_used))}），没有给 --media-dir，图片没有复制")
     print(f"已写出 {len(rows)} 张卡 → {a.out}")
     print("类别：" + "，".join(f"{k} {v}" for k, v in kinds.most_common()))
     if book is not None:

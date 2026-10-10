@@ -1,6 +1,6 @@
 ---
 name: book-to-ankicard
-description: 把一本书（PDF、EPUB、DOCX、Markdown、TXT）拆成以知识点为单位的 Anki 问答卡，导出为可直接导入 Anki 的 .tsv 文件。先给每章的样卡预览，确认后再整本生成；每张卡带原文依据并自动核对，防止编造。适合两类书：行测讲义这类“方法论、例题多、重体系”的书，和法考教材这类“知识点多、重逐点记忆”的书。Use when the user wants to turn a book, lecture notes or textbook into Anki flashcards / an importable Anki deck.
+description: 把一本书（PDF、EPUB、DOCX、Markdown、TXT）拆成以知识点为单位的 Anki 问答卡，导出为可直接导入 Anki 的 .tsv 文件；扫描版（带 OCR 文字层）的法考教材 PDF 可以用代码直接转成“一个考点一张卡”，含表格和示意图，不花模型 token。先给每章的样卡预览，确认后再整本生成；每张卡带原文依据并自动核对，防止编造。适合两类书：行测讲义这类“方法论、例题多、重体系”的书，和法考教材这类“知识点多、重逐点记忆”的书。Use when the user wants to turn a book, lecture notes or textbook into Anki flashcards / an importable Anki deck.
 ---
 
 <!-- argument-hint: <书文件路径> [牌组名] -->
@@ -15,6 +15,46 @@ description: 把一本书（PDF、EPUB、DOCX、Markdown、TXT）拆成以知识
 - **每张卡必须带 `evidence`**（书中原文片段），生成后用脚本核对；找不到的卡要回原文复查，不能留。
 - 默认**中文**输出；书是别的语言时，问题答案仍用中文，术语保留原文。
 - 卡片数由**内容密度**决定，不设固定数量；**宁少勿滥**，背景性内容不做卡。
+
+## 两条路：对话式 / 代码式
+
+| | 对话式（下面 Step 0–7） | 代码式（扫描版法考教材） |
+|---|---|---|
+| 适合 | 需要判断“拆成哪几张、怎么问”的书（行测讲义这类方法论型） | 已经按“考点”编排好的教材：**一个考点 = 一张卡**，内容照原书 |
+| 谁来做 | 模型逐章读、写卡 | **脚本**：切考点、重建表格、清洗 OCR、拼卡；模型只看报告里标 ⚠ 的几处 |
+| 模型 token | 读全书 + 写全部卡 | 接近 0（只复核 ⚠） |
+| 入口 | `extract.py` → 手写 cards → `build_tsv.py` | `pdf_to_cards.py` → `build_tsv.py` |
+
+### 代码式：扫描版 / OCR 教材 PDF → 知识点卡片
+
+适用 PDF：每页是扫描图，上面叠着不可见的 OCR 文字层，章节以「考点N：标题」开头。依赖：`pip install pymupdf opencv-python-headless numpy`。
+
+```bash
+# 1. 整本（或一个片段）切成考点，重建表格，清洗，拼成卡
+python3 -I "<本 skill 目录>/scripts/pdf_to_cards.py" "<教材.pdf>" --out "<输出目录>" --subject 民法 \
+    [--only 4,5] [--drop "水印词1,水印词2"] [--fixes 错字对照.tsv]
+
+# 2. 导出 .tsv（--table-format html=真表格，list=拆成列表；图片复制到输出旁的 media/）
+python3 -I "<本 skill 目录>/scripts/build_tsv.py" "<输出目录>/cards" --deck "法考::民法" \
+    --out "<输出目录>/民法.tsv" --profile memory --max-back 6000 \
+    --tables "<输出目录>/tables.json" --table-format html --media-dir "<输出目录>/media"
+```
+
+脚本做的事：
+- **切考点**：按「考点N：」标题切；标题前（上一个考点的尾巴）和下一个标题后的内容不要；跨页按阅读顺序接起来。
+- **表格**：用 OpenCV 找表格线，重建网格和**合并单元格（跨行、跨列）**，把 OCR 字按位置放进格子；跨页“续表”并回上一张；重建不了的退回成图片。
+- **示意图 / 思维导图**：按树形连接线定位，裁成图片放进卡片（`[[img:…]]`）。
+- **清洗**：页眉页脚、页码、水印（`--drop`，可加正则）；OCR 常见错字（`自已→自己` 等，对照表可用 `--fixes` 追加；**数字、法条号绝不自动改**）。
+- **结构**：`一、二、三、`小节（保留 ★ 重要度）、`[法理与逻辑] [懂原理] [萌主点拨]` 等小标签框、脚注 ①②③、随堂练习（题干 + 选项 + 脚注里的答案）。
+- **报告** `report.md`：列出所有需要人看一眼的地方——扫描页边缘截掉字（“16周岁”变成“周岁”）、答案没找到、合并单元格不规则、被改过的错字、图片要拷到哪里。
+
+**拿到输出后你要做的**：打开 `report.md`，只复核标 ⚠ 的几处（必要时把对应页渲染成图看一眼）。**法考里数字、期限、法条号不能错**：报告里关于“数字可能被截”的提示一律对照原书。
+
+注意：
+- 水印词、页眉形式因书而异——第一次跑先看 `report.md` 和卡片开头，必要时用 `--drop` 追加。
+- 没有表格线的“无线表”识别不了（会退成普通文字）；跨页的表格要求两页的题注一致才会合并。
+- 文字下划线（原书用来标重点）暂时没有转成加粗。
+- 表格在 Anki 里是真表格；在“玉简”里需要支持表格的版本（`--table-format list` 可以先拆成列表应急）。
 
 文件说明：`scripts/extract.py`（提取文本）、`scripts/build_tsv.py`（校验并导出）、`references/card-design.md`（**拆卡规范，生成前必读**）。
 
