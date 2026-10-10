@@ -48,7 +48,7 @@ CIRCLED = "①②③④⑤⑥⑦⑧⑨⑩"
 UNIT_START = re.compile(r"^(周岁|岁以上|岁以下|个月|日内|日起|万元|％|%)")
 ZH_NUM = "一二三四五六七八九十百零〇"
 UNIT_PRESETS = {  # 名字 → (正则（第 1 组=编号，第 2 组=标题）, 称呼)
-    "kaodian": (r"^\s*考点\s*(\d+)\s*[：:]\s*(.+?)\s*$", "考点"),
+    "kaodian": (r"^\s*考点\s*(\d+)\s*[：:、.．]?\s*(.+?)\s*$", "考点"),      # 「考点4：标题」或「考点 1  标题」
     "zhishidian": (r"^\s*知识点\s*([" + ZH_NUM + r"\d]+)\s*[：:、.．]?\s*(.+?)\s*$", "知识点"),
     # 法理学这类没有“知识点”标题的书：「第一章 / 第一节」下面直接是「一、法概念的争议」「二、…」——一个小节做一张卡。
     # 容易和正文里的「一、二、」撞，所以不参与自动判断，只在前两种一个都没认出来时才自动用，或手动选
@@ -57,7 +57,7 @@ UNIT_PRESETS = {  # 名字 → (正则（第 1 组=编号，第 2 组=标题）,
 # 上一级标题：只用来做标签 / 出处，并截断上一个知识点。(级别, 正则（第 1 组=编号，第 2 组=标题）, 称呼)
 PARENT_PATTERNS = [
     (1, re.compile(r"^\s*第\s*([" + ZH_NUM + r"\d]+)\s*(部分|编|篇)\s*(.*)$"), None),
-    (2, re.compile(r"^\s*第\s*([" + ZH_NUM + r"\d]+)\s*章\s*(.*)$"), "章"),
+    (2, re.compile(r"^\s*第\s*([" + ZH_NUM + r"\d]+)\s*[章讲]\s*(.*)$"), "章"),      # 「第一章」「第一讲」
     (3, re.compile(r"^\s*第\s*([" + ZH_NUM + r"\d]+)\s*节\s*(.*)$"), "节"),
 ]
 
@@ -136,7 +136,7 @@ def match_parent(text: str):
 
 UNIT: Unit = Unit(*UNIT_PRESETS["kaodian"])  # main() 里按书重新设置
 SECTION = re.compile(r"^\s*([一二三四五六七八九十]+)\s*[、，,．.]\s*(.+?)\s*$")
-BOX_LABEL = re.compile(r"^\s*[\[［【「]\s*([\u4e00-\u9fff]{2,6})\d*\s*[\]］】」]*\s*(.*)$")
+BOX_LABEL = re.compile(r"^\s*[\[［【「]\s*([\u4e00-\u9fff]{1,6})\d*\s*[\]］】」]*\s*(.*)$")
 OPTION = re.compile(r"(?<![A-Za-z0-9])([A-D])\s*[.．、]\s*(?=\S)")
 CJK = re.compile(r"[　-〿一-鿿＀-￯“”‘’（）【】《》「」、，。；：？！…—①-⑩]")
 
@@ -181,7 +181,7 @@ class Cleaner:
 # 「知识点一」「第一章」这类标题，OCR 常把编号和标题名切成同一视觉行里的两个框（甚至顺序是乱的）；
 # 编号框单独成行时，把它右边同一行的文字框并回来，才认得出完整标题。
 BARE_HEAD = re.compile(
-    r"^\s*(知识点\s*[一二三四五六七八九十百零〇\d]+|考点\s*\d+|第\s*[一二三四五六七八九十百零〇\d]+\s*(?:部分|编|篇|章|节)|[一二三四五六七八九十]+\s*[、，,．.]|[\[［【「]\s*[\u4e00-\u9fff]{2,6}\d*\s*[\]］】」]+)\s*[：:、.．]?\s*$")
+    r"^\s*(知识点\s*[一二三四五六七八九十百零〇\d]+|考点\s*\d+|第\s*[一二三四五六七八九十百零〇\d]+\s*(?:部分|编|篇|章|讲|节)|[一二三四五六七八九十]+\s*[、，,．.]|[\[［【「]\s*[\u4e00-\u9fff]{2,6}\d*\s*[\]］】」]+)\s*[：:、.．]?\s*$")
 
 def merge_heading_pieces(lines):
     gone = set()
@@ -791,8 +791,19 @@ def build_cards(doc, args, clean: Cleaner):
     ctx: dict[int, str] = {}
     orphan: dict[str, int] = defaultdict(int)  # 章 / 部分标题之后、第一个知识点之前的文字行数
     last_parent = ""
+    # 「一、概述」后面紧跟着就是一个知识点标题（中间没有别的内容）：它是大节标题，不是知识点里的小节——归到上级标题，不并进上一个知识点
+    lines_only = [x for x in kept if x["kind"] == "line"]
+    for i_, x in enumerate(lines_only[:-1]):
+        if SECTION.match(x["text"]) and not UNIT.match(x["text"]) and UNIT.match(lines_only[i_ + 1]["text"]) \
+                and lines_only[i_ + 1]["page"] - x["page"] <= 1:
+            x["as_parent"] = True
     for e in kept:
         if e["kind"] == "line":
+            if e.get("as_parent"):
+                ctx[4] = e["text"].strip()
+                cur = None
+                last_parent = e["text"].strip()
+                continue
             m = UNIT.match(e["text"])
             if m:
                 cur = {"no": m[0], "title": m[1], "ctx": [ctx[k] for k in sorted(ctx)], "els": []}
@@ -1008,17 +1019,17 @@ def assemble(seg, idx, args, clean):
     back = "\n".join(md)
     chapter = ""
     for c in reversed(seg["ctx"]):
-        if "章" in c[:6] or "节" in c[:6]:
+        if "章" in c[:6] or "节" in c[:6] or "讲" in c[:6]:
             chapter = c
             break
     path = " · ".join(seg["ctx"])
-    short = "".join(re.match(r"^(第\s*[" + ZH_NUM + r"\d]+\s*(?:部分|编|篇|章|节))", c).group(1).replace(" ", "")
-                    for c in seg["ctx"] if re.match(r"^第\s*[" + ZH_NUM + r"\d]+\s*(?:部分|编|篇|章|节)", c))
+    short = "".join(re.match(r"^(第\s*[" + ZH_NUM + r"\d]+\s*(?:部分|编|篇|章|讲|节))", c).group(1).replace(" ", "")
+                    for c in seg["ctx"] if re.match(r"^第\s*[" + ZH_NUM + r"\d]+\s*(?:部分|编|篇|章|讲|节)", c))
     tags = [t for t in (args.subject, f"{unit_label}{no}", re.sub(r"\s+", "_", chapter)) if t]
     # 正面：有 部分/章 时写成 【三国法1.2.1】标题（部分.章.知识点）；只有章时 【民法2.4】；没有上级标题时 【民法·考点4】
     nums = []
     for c in seg["ctx"]:
-        m_ = re.match(r"^第\s*([" + ZH_NUM + r"\d]+)\s*(?:部分|编|篇|章|节)", c)
+        m_ = re.match(r"^第\s*([" + ZH_NUM + r"\d]+)\s*(?:部分|编|篇|章|讲|节)", c)
         if m_ and zh_to_int(m_.group(1)):
             nums.append(str(zh_to_int(m_.group(1))))
     front = f"【{args.subject}{'.'.join(nums + [str(no)])}】{title}" if nums else f"【{args.subject}·{unit_label}{no}】{title}"
