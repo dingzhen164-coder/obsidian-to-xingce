@@ -39,7 +39,7 @@ def main() -> int:
         return r.returncode
     tsv = out / f"{subject}.tsv"
     r = subprocess.run(py + [str(HERE / "scripts" / "build_tsv.py"), str(out / "cards"), "--deck", f"法考::{subject}", "--out", str(tsv),
-                             "--profile", "memory", "--max-back", "30000", "--tables", str(out / "tables.json"),
+                             "--profile", "memory", "--no-source", "--max-back", "30000", "--tables", str(out / "tables.json"),
                              "--table-format", "html", "--media-dir", str(out / "media")])
     if r.returncode:
         return r.returncode

@@ -264,6 +264,7 @@ def main() -> None:
     ap.add_argument("--examples", type=Path, help="extract_examples.py 生成的 examples.json；卡片里用 \"examples\": [id,…] 引用")
     ap.add_argument("--with-analysis", action="store_true", help="例题里同时放书里的“解析”（默认只放 题干、选项、答案、方法论提示）")
     ap.add_argument("--tables", type=Path, help="pdf_to_cards.py 生成的 tables.json；卡片里的 [[table:ID]] 由它填充")
+    ap.add_argument("--no-source", action="store_true", help="卡片末尾不附“出处”小字")
     ap.add_argument("--table-format", choices=["html", "list"], default="html",
                     help="html=真正的表格（Anki 里正常；“玉简”需要 3.4 以后支持表格的版本）；list=拆成列表（任何查看器都能看）")
     ap.add_argument("--media-dir", type=Path, help="卡片里 [[img:文件名]] 引用的图片所在目录；会复制到输出文件旁的 media/")
@@ -381,7 +382,7 @@ def main() -> None:
         back_html = to_html(back, left=False)
         for key, val in raws.items():
             back_html = back_html.replace(f"<div>{key}</div>", val).replace(key, val)
-        if c.get("source"):
+        if c.get("source") and not a.no_source:
             src = html.escape(str(c["source"]), quote=False)
             back_html += f"<div style='margin-top:0.8em;font-size:0.8em;color:gray'>出处：{src}</div>"
         back_html = f"<div style='text-align:left'>{back_html}</div>"
