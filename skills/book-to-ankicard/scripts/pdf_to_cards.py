@@ -874,8 +874,8 @@ def assemble(seg, idx, args, clean):
         if para:
             text = clean(join_lines(para))
             text = re.sub(r"^[（(](\d+)[）)]\s*", r"\1. ", text)  # （1）… → 1. …
-            if text.count("\n") == 0 and len(re.findall(r"[②-⑩]", text)) >= 1 and text.startswith("①"):
-                text = re.sub(r"(?<=[。；;])\s*(?=[②-⑩])", "\n", text)  # ①②③ 是并列条目：各占一行
+            if text.count("\n") == 0 and len(set(re.findall(r"[①-⑩]", text))) >= 3:
+                text = re.sub(r"(?<=[。；;：:])\s*(?=[①-⑩])", "\n", text)  # ①②③ 是并列条目：各占一行
             md.append(split_options(text))
             para = []
 
@@ -1006,8 +1006,15 @@ def assemble(seg, idx, args, clean):
     short = "".join(re.match(r"^(第\s*[" + ZH_NUM + r"\d]+\s*(?:部分|编|篇|章|节))", c).group(1).replace(" ", "")
                     for c in seg["ctx"] if re.match(r"^第\s*[" + ZH_NUM + r"\d]+\s*(?:部分|编|篇|章|节)", c))
     tags = [t for t in (args.subject, f"{unit_label}{no}", re.sub(r"\s+", "_", chapter)) if t]
+    # 正面：有 部分/章 时写成 【三国法1.2.1】标题（部分.章.知识点）；只有章时 【民法2.4】；没有上级标题时 【民法·考点4】
+    nums = []
+    for c in seg["ctx"]:
+        m_ = re.match(r"^第\s*([" + ZH_NUM + r"\d]+)\s*(?:部分|编|篇|章|节)", c)
+        if m_ and zh_to_int(m_.group(1)):
+            nums.append(str(zh_to_int(m_.group(1))))
+    front = f"【{args.subject}{'.'.join(nums + [str(no)])}】{title}" if nums else f"【{args.subject}·{unit_label}{no}】{title}"
     card = {
-        "front": f"【{args.subject}·{short + unit_label if short else unit_label}{no}】{title}".replace("··", "·"),
+        "front": front,
         "back": back,
         "tags": tags,
         "source": " · ".join(x for x in (args.subject, path, f"{unit_label}{no}") if x),
