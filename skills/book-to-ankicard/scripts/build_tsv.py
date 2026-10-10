@@ -98,7 +98,7 @@ def table_to_items(rows: list[list[str]]) -> list[str]:
         if head[i] in ("⇢", "〃"):
             head[i] = head[i - 1]
     body = [r + [""] * (n - len(r)) for r in body]
-    if len(body) == 1 and n >= 2:
+    if len(body) == 1 and n >= 2 and any(h.strip() for h in head):
         return [f"**{h}**：{v}" for h, v in zip(head, body[0]) if v not in ("⇢", "〃")]
 
     def merge(cols):  # 同名表头相邻：值接在一起（“效力”下分“有效/无效”两列）
