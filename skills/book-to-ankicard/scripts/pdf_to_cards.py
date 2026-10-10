@@ -35,11 +35,12 @@ import numpy as np
 import pymupdf
 
 # ---------------------------------------------------------------- 配置
-DEFAULT_DROP = [r"法考小米", r"考小米", r"方圆众合教育", r"FANGYUAN\s*ZHONGHE\s*EDUCATION", r"添加百度网?盘?好?友?", r"网盘好友"]  # 水印/广告词（正则）
+DEFAULT_DROP = [r"法考资料免费分享公众号[：:]?法考我志在必得", r"法考小米", r"考小米", r"方圆众合教育", r"FANGYUAN\s*ZHONGHE\s*EDUCATION", r"[：:]?氵", r"添加百度网?盘?好?友?", r"网盘好友"]  # 水印/广告词（正则）
 HEADER_PATTERNS = [r"^\S{1,6}\s*[|｜]?\s*授课精要$", r"^续表$"]  # 页眉（OCR 常把竖线丢掉）；续表单独处理
 DEFAULT_FIXES = [  # (正则, 替换) —— 只放“几乎不可能是对的”的 OCR 错字；数字、法条号绝不自动改
     ("自\u5df2", "自\u5df1"),  # 自已 → 自己（OCR 把“己”认成“已”）
     (r"收人", "收入"),
+    (r"领士", "领土"),
     (r"自前的", "目前的"),
     (r"(?<=\d)一(?=\d)", "—"),  # 18一22 → 18—22（条文号范围里的“一”是 OCR 把长横线认错了）
 ]
@@ -122,8 +123,8 @@ def match_parent(text: str):
 
 
 UNIT: Unit = Unit(*UNIT_PRESETS["kaodian"])  # main() 里按书重新设置
-SECTION = re.compile(r"^\s*([一二三四五六七八九十]+)、\s*(.+?)\s*$")
-BOX_LABEL = re.compile(r"^\s*[\[［【「]\s*([\u4e00-\u9fff]{2,6})\d*\s*[\]］】」]?\s*(.*)$")
+SECTION = re.compile(r"^\s*([一二三四五六七八九十]+)\s*[、，,．.]\s*(.+?)\s*$")
+BOX_LABEL = re.compile(r"^\s*[\[［【「]\s*([\u4e00-\u9fff]{2,6})\d*\s*[\]］】」]*\s*(.*)$")
 OPTION = re.compile(r"(?<![A-Za-z0-9])([A-D])\s*[.．、]\s*(?=\S)")
 CJK = re.compile(r"[　-〿一-鿿＀-￯“”‘’（）【】《》「」、，。；：？！…—①-⑩]")
 
@@ -155,7 +156,70 @@ class Cleaner:
             s, n = rx.subn(rep, s)
             if n:
                 self.applied[f"{rx.pattern} → {rep}"] += n
+        # OCR 常把 ⑤ 认成 ③：①②③④ 之后再出现的 ③ 实际是 ⑤
+        if "④" in s and s.count("③") >= 2:
+            i = s.index("④")
+            j = s.find("③", i)
+            if j > 0:
+                s = s[:j] + "⑤" + s[j + 1:]
+                self.applied["④之后的③ → ⑤"] += 1
         return s
+
+
+# 「知识点一」「第一章」这类标题，OCR 常把编号和标题名切成同一视觉行里的两个框（甚至顺序是乱的）；
+# 编号框单独成行时，把它右边同一行的文字框并回来，才认得出完整标题。
+BARE_HEAD = re.compile(
+    r"^\s*(知识点\s*[一二三四五六七八九十百零〇\d]+|考点\s*\d+|第\s*[一二三四五六七八九十百零〇\d]+\s*(?:部分|编|篇|章|节)|[一二三四五六七八九十]+\s*[、，,．.]|[\[［【「]\s*[\u4e00-\u9fff]{2,6}\d*\s*[\]］】」]+)\s*[：:、.．]?\s*$")
+
+def merge_heading_pieces(lines):
+    gone = set()
+    for i, a in enumerate(lines):
+        if i in gone or not BARE_HEAD.match(a["text"]):
+            continue
+        ha = a["y1"] - a["y0"]
+        best, best_gap = None, 1e9
+        for j, b in enumerate(lines):
+            if j == i or j in gone or BARE_HEAD.match(b["text"]):
+                continue
+            overlap = min(a["y1"], b["y1"]) - max(a["y0"], b["y0"])
+            gap = b["x0"] - a["x1"]
+            if overlap >= 0.6 * min(ha, b["y1"] - b["y0"]) and -10 <= gap <= 60 and gap < best_gap:
+                best, best_gap = j, gap
+        if best is None and a["text"].lstrip().startswith(("知识点", "考点")):
+            # 标题名在下一行（左对齐、很短）
+            for j, b in enumerate(lines):
+                if j == i or j in gone or BARE_HEAD.match(b["text"]):
+                    continue
+                dy = b["y0"] - a["y1"]
+                if 0 <= dy <= 1.2 * ha and abs(b["x0"] - a["x0"]) <= 40 and len(b["text"]) <= 30:
+                    best = j
+                    break
+        if best is None:
+            continue
+        b = lines[best]
+        a["text"] = a["text"].strip() + " " + b["text"].strip()
+        a["x0"], a["y0"] = min(a["x0"], b["x0"]), min(a["y0"], b["y0"])
+        a["x1"], a["y1"] = max(a["x1"], b["x1"]), max(a["y1"], b["y1"])
+        gone.add(best)
+    out = [l for k, l in enumerate(lines) if k not in gone]
+    out.sort(key=lambda l: (round(l["y0"] / 3), l["x0"]))
+    return out
+
+
+
+def split_options(text: str) -> str:
+    """一整段里依次出现 A. B. C. D.（OCR 常把句点认成逗号/顿号）→ 题干和每个选项各占一行。"""
+    pos, at = [], 0
+    for L in "ABCD":
+        m = re.compile(r"(?<![A-Za-z0-9])" + L + r"\s*[.．。,，、]\s*(?=\S)").search(text, at)
+        if not m:
+            break
+        pos.append(m.start())
+        at = m.end()
+    if len(pos) < 3 or text[:pos[0]].strip() == "":
+        return text
+    parts = [text[:pos[0]].strip()] + [text[a:b].strip() for a, b in zip(pos, pos[1:] + [len(text)])]
+    return "\n".join(re.sub(r"^([A-D])\s*[.．。,，、]\s*", r"\1. ", x) for x in parts)
 
 
 # ---------------------------------------------------------------- 页面读取
@@ -232,7 +296,8 @@ class Page:
                 "x1": max(c[3] for c in cs), "y1": max(c[4] for c in cs), "id": lid,
             })
         lines.sort(key=lambda l: (round(l["y0"] / 3), l["x0"]))
-        return lines
+        return merge_heading_pieces(lines)
+
 
 
 # ---------------------------------------------------------------- 表格
@@ -249,6 +314,18 @@ class Table:
         for c in self.cells:
             if c["r0"] == 0 and c["c0"] == 0 and c["c1"] == len(self.xs) - 1:
                 return c["text"]
+        return ""
+
+    def unreliable(self) -> str:
+        """表格重建不可靠的原因（空字符串=可靠）。"""
+        ncol = len(self.xs) - 1
+        if not self.ok:
+            return "的合并单元格不规整"
+        if ncol > 7:
+            return f"有 {ncol} 列，更像组织结构图"
+        empty = sum(1 for c in self.cells if not c["text"].strip())
+        if self.cells and empty / len(self.cells) > 0.3:
+            return "里有大量空格子，更像框图"
         return ""
 
     def to_html(self) -> str:
@@ -485,6 +562,19 @@ def detect_figures(page: Page, tables: list[Table]):
     for t in tables:
         x0, y0, x1, y1 = t.bbox_px
         ver[max(0, y0 - 40): y1 + 40, max(0, x0 - 10): x1 + 10] = 0
+    # 斜线（树形图 / 括号图里的连线）：正文、表格里几乎没有斜线，几条斜线聚在一起就是图
+    dark = cv2.threshold(gray, 140, 255, cv2.THRESH_BINARY_INV)[1]
+    for t in tables:
+        x0, y0, x1, y1 = t.bbox_px
+        dark[max(0, y0 - 10): y1 + 10, max(0, x0 - 10): x1 + 10] = 0
+    diag = []
+    segs = cv2.HoughLinesP(dark, 1, np.pi / 180, threshold=60, minLineLength=max(60, W // 14), maxLineGap=6)
+    for sg in (np.asarray(segs).reshape(-1, 4) if segs is not None else []):
+        x_a, y_a, x_b, y_b = [int(v) for v in sg]
+        ang = abs(np.degrees(np.arctan2(y_b - y_a, x_b - x_a)))
+        if 8 < ang < 82 or 98 < ang < 172:
+            cv2.line(ver, (x_a, y_a), (x_b, y_b), 255, 3)
+            diag.append((min(x_a, x_b), min(y_a, y_b)))
     clustered = cv2.dilate(ver, cv2.getStructuringElement(cv2.MORPH_RECT, (110, 60)))
     n, lab, st, _ = cv2.connectedComponentsWithStats(clustered)
     vn, vlab, vst, _ = cv2.connectedComponentsWithStats(ver)
@@ -492,18 +582,80 @@ def detect_figures(page: Page, tables: list[Table]):
     for i in range(1, n):
         x, y, w, h, _a = st[i]
         segs = [vst[j] for j in range(1, vn) if x <= vst[j][0] <= x + w and y <= vst[j][1] <= y + h]
-        if len(segs) < 3:
+        ndiag = sum(1 for (dx, dy) in diag if x <= dx <= x + w and y <= dy <= y + h)
+        if len(segs) + ndiag < 3:
             continue
         top = min(sg[1] for sg in segs) - 15
         bot = max(sg[1] + sg[3] for sg in segs) + 15
         left = min(sg[0] for sg in segs) - 20
         right = max(sg[0] + sg[2] for sg in segs) + 20
-        for ln in page.lines:  # 与这个高度重叠的文字行：整行都算进图里
-            cy = (ln["y0"] + ln["y1"]) / 2 * sc
-            if top <= cy <= bot and len(ln["text"]) <= 40 and not UNIT.match(ln["text"]):
-                left = min(left, int(ln["x0"] * sc) - 10)
-                right = max(right, int(ln["x1"] * sc) + 10)
-        boxes.append((max(0, left), max(0, top), min(W, right), min(H, bot)))
+        boxes.append([left, top, right, bot])
+    # 图里竖排的单字标签（“群 岛 水 域”一字一行）：4 个以上聚在一起就是框图
+    ones = []
+    for ln in page.lines:
+        if len(ln["text"]) == 1 and re.match(r"[\u4e00-\u9fff]", ln["text"]):
+            b_ = (ln["x0"] * sc, ln["y0"] * sc, ln["x1"] * sc, ln["y1"] * sc)
+            if not any(t.bbox_px[0] - 6 <= (b_[0] + b_[2]) / 2 <= t.bbox_px[2] + 6 and t.bbox_px[1] - 6 <= (b_[1] + b_[3]) / 2 <= t.bbox_px[3] + 6
+                       for t in tables):
+                ones.append(b_)
+    grp = list(range(len(ones)))
+
+    def gf(a_):
+        while grp[a_] != a_:
+            grp[a_] = grp[grp[a_]]
+            a_ = grp[a_]
+        return a_
+
+    for i_ in range(len(ones)):
+        for j_ in range(i_ + 1, len(ones)):
+            A, B = ones[i_], ones[j_]
+            if A[0] - 90 <= B[2] and B[0] - 90 <= A[2] and A[1] - 90 <= B[3] and B[1] - 90 <= A[3]:
+                grp[gf(i_)] = gf(j_)
+    clusters: dict[int, list] = defaultdict(list)
+    for i_, b_ in enumerate(ones):
+        clusters[gf(i_)].append(b_)
+    for members in clusters.values():
+        if len(members) >= 4:
+            boxes.append([int(min(m[0] for m in members)) - 20, int(min(m[1] for m in members)) - 15,
+                          int(max(m[2] for m in members)) + 20, int(max(m[3] for m in members)) + 15])
+    # 同一张图常被切成几块（图里有空白）：相互靠得很近 / 重叠的合并成一块
+    merged = True
+    while merged:
+        merged = False
+        for a in range(len(boxes)):
+            for b in range(a + 1, len(boxes)):
+                A, B = boxes[a], boxes[b]
+                if A[0] - 40 <= B[2] and B[0] - 40 <= A[2] and A[1] - 40 <= B[3] and B[1] - 40 <= A[3]:
+                    boxes[a] = [min(A[0], B[0]), min(A[1], B[1]), max(A[2], B[2]), max(A[3], B[3])]
+                    del boxes[b]
+                    merged = True
+                    break
+            if merged:
+                break
+    out = []
+    for left, top, right, bot in boxes:
+        top, bot = top - 30, bot + 30  # 图的上下沿常有一两行标签（如“管理（统治）行为”）
+        grew = True
+        while grew:  # 与这个高度重叠的文字行整行算进图里；图的上下边缘紧挨着的短标签（“毗连区”）也并进来，直到再没有
+            grew = False
+            for ln in page.lines:
+                t = ln["text"]
+                if UNIT.match(t) or SECTION.match(t) or match_parent(t) or len(t) > 40:
+                    continue
+                y0_, y1_ = ln["y0"] * sc, ln["y1"] * sc
+                cy = (y0_ + y1_) / 2
+                inside = top <= cy <= bot
+                touching = ((top - 70 <= y1_ < top and len(t) <= 6) or (bot < y0_ <= bot + 100 and len(t) <= 12)) \
+                    and not re.search(r"[。；？！]$", t) and not re.match(r"^\s*([（(][一二三四五六七八九十\d]+[）)]|\d+[.、．])", t) \
+                    and ln["x1"] * sc >= left - 20 and ln["x0"] * sc <= right + 20
+                if inside or touching:
+                    nl, nr = min(left, int(ln["x0"] * sc) - 10), max(right, int(ln["x1"] * sc) + 10)
+                    nt, nb = min(top, int(y0_) - 6), max(bot, int(y1_) + 6)
+                    if (nl, nr, nt, nb) != (left, right, top, bot):
+                        left, right, top, bot = nl, nr, nt, nb
+                        grew = True
+        out.append((max(0, left), max(0, top), min(W, right), min(H, bot)))
+    boxes = out
     return boxes
 
 
@@ -545,6 +697,21 @@ def merge_continued(tables: list[Table]) -> list[Table]:
 # ---------------------------------------------------------------- 考点切分与结构
 def build_cards(doc, args, clean: Cleaner):
     pages = [Page(doc, i) for i in range(len(doc))]
+    # 自动找页眉页脚 / 水印：同一行文字在页面最上或最下出现在多页，就是每页重复的东西，不是正文
+    rep_cnt: dict[str, int] = defaultdict(int)
+    for pg in pages:
+        seen = set()
+        for ln in pg.lines:
+            t = re.sub(r"\s+", "", ln["text"])
+            if len(t) >= 6 and (ln["y0"] < pg.h * 0.08 or ln["y1"] > pg.h * 0.9) and t not in seen:
+                seen.add(t)
+                rep_cnt[t] += 1
+    need = max(3, int(len(pages) * 0.35))
+    auto_drop = sorted(t for t, n in rep_cnt.items() if n >= need and not UNIT.match(t) and not match_parent(t))
+    for t in auto_drop:
+        clean.drop.append(re.compile(r"\s*".join(re.escape(ch) for ch in t)))
+    if auto_drop:
+        print("自动识别出每页重复的页眉 / 水印并删除：" + "；".join(auto_drop))
     for pg in pages:
         pg.apply_drops(clean.drop)
     all_tables: dict[int, list[Table]] = {}
@@ -570,7 +737,7 @@ def build_cards(doc, args, clean: Cleaner):
             stream.append({"kind": "line", "page": pg.index, "y": ln["y0"], "x0": ln["x0"], "x1": ln["x1"],
                            "text": ln["text"], "w": pg.w, "h": pg.h})
         for t in tabs:
-            stream.append({"kind": "table", "page": pg.index, "y": t.bbox_px[1] / sc, "table": t})
+            stream.append({"kind": "table", "page": pg.index, "y": t.bbox_px[1] / sc, "table": t, "pg": pg})
     # 每页的左边距：行首 x 的 15% 分位；比它多缩进 8pt 以上的行视为新段落开头
     margins = {}
     for pg in pages:
@@ -597,6 +764,8 @@ def build_cards(doc, args, clean: Cleaner):
             txt = clean(e["text"]).strip()
             if not txt:
                 continue
+            if len(txt) <= 2 and not re.search(r"[\u4e00-\u9fffA-Za-z0-9]", txt):
+                continue  # 水印残片、孤零零的标点
             if txt == "续表" or (e["y"] < e["h"] * 0.075 and any(re.match(p, txt) for p in HEADER_PATTERNS)):
                 continue
             if e["y"] > e["h"] * 0.88 and re.fullmatch(r"\d{1,3}", txt):
@@ -638,6 +807,14 @@ def build_cards(doc, args, clean: Cleaner):
         card, notes = assemble(seg, len(cards) + 1, args, clean)
         cards.append(card)
         report.append((card["front"], notes))
+    # 自检：标题有没有漏认（卡片数偏少的最常见原因）
+    suspect = [e["text"] for e in kept if e["kind"] == "line" and re.match(r"^\s*(知识点|考点)", e["text"]) and not UNIT.match(e["text"])
+               and len(e["text"]) < 40]
+    if suspect:
+        report.append(("（疑似知识点标题但没认出来）", [f"这些行像标题却没匹配上：{'；'.join(suspect[:8])}。可以用 --unit-regex 指定标题写法"]))
+    for card, notes in zip(cards, [r[1] for r in report[:len(cards)]]):
+        if len(card["back"]) > 12000:
+            notes.append(f"这张卡有 {len(card['back'])} 字，偏长，可能把好几个知识点并成了一张——多半是中间的知识点标题没认出来")
     if orphan:
         report.append(("（章 / 部分开头没有归入任何知识点的文字，没有做进卡片）",
                        [f"“{k}”下面、第一个知识点之前有 {v} 行文字（比如这一章的总说明）" for k, v in orphan.items()]))
@@ -696,7 +873,7 @@ def assemble(seg, idx, args, clean):
             text = re.sub(r"^[（(](\d+)[）)]\s*", r"\1. ", text)  # （1）… → 1. …
             if text.count("\n") == 0 and len(re.findall(r"[②-⑩]", text)) >= 1 and text.startswith("①"):
                 text = re.sub(r"(?<=[。；;])\s*(?=[②-⑩])", "\n", text)  # ①②③ 是并列条目：各占一行
-            md.append(text)
+            md.append(split_options(text))
             para = []
 
     def flush_exercise():
@@ -744,6 +921,14 @@ def assemble(seg, idx, args, clean):
                 continue  # 已并入上一张表
             flush_para()
             flush_exercise()
+            why = t.unreliable()
+            if why:  # 重建不出可靠的表格（组织结构图、合并格不规整、一半格子是空的）：整块裁成图片，宁可是图也别是错表
+                fx0, fy0, fx1, fy1 = t.bbox_px
+                name = f"{uid}-图{len(figures) + 1}.png"
+                figures[name] = e["pg"].img[max(0, fy0 - 8): fy1 + 4, max(0, fx0 - 12): fx1 + 12]
+                md.append(f"[[img:{name}]]")
+                notes.append(f"第{t.page_index + 1}页的一块表格/框图{why}，已裁成图片 {name} 放进卡片（图片要拷进 Anki 的 collection.media 或你的库）")
+                continue
             tcount += 1
             tid = f"{uid}-t{tcount}"
             tables_html[tid] = t.to_html()
@@ -787,7 +972,7 @@ def assemble(seg, idx, args, clean):
                 ex_page = e["page"]
             continue
         # 新段落：行首有缩进，或这一行以 （1）/1. 开头；孤零零的 "(2)" 并入下一行
-        starts_item = bool(re.match(r"^([（(]\d+[）)]|\d+[.、．])", txt))
+        starts_item = bool(re.match(r"^([（(]\d+[）)]|\d+[.、．]|[（(][一二三四五六七八九十]+[）)]|※)", txt))
         lone_num = bool(para) and bool(re.fullmatch(r"[（(]\d+[）)]", para[-1])) and len(para) == 1
         if para and not lone_num and (e.get("indent") or starts_item):
             flush_para()
@@ -815,7 +1000,8 @@ def assemble(seg, idx, args, clean):
             chapter = c
             break
     path = " · ".join(seg["ctx"])
-    short = re.match(r"^(第[" + ZH_NUM + r"\d]+(?:部分|编|篇|章|节))", seg["ctx"][-1]).group(1) if seg["ctx"] else ""
+    short = "".join(re.match(r"^(第\s*[" + ZH_NUM + r"\d]+\s*(?:部分|编|篇|章|节))", c).group(1).replace(" ", "")
+                    for c in seg["ctx"] if re.match(r"^第\s*[" + ZH_NUM + r"\d]+\s*(?:部分|编|篇|章|节)", c))
     tags = [t for t in (args.subject, f"{unit_label}{no}", re.sub(r"\s+", "_", chapter)) if t]
     card = {
         "front": f"【{args.subject}·{short + unit_label if short else unit_label}{no}】{title}".replace("··", "·"),
@@ -855,7 +1041,12 @@ def main():
 
     doc = pymupdf.open(str(args.pdf))
     global UNIT
-    texts = [clean(ln.strip()) for pg in doc for ln in pg.get_text("text").splitlines()]
+    texts = []
+    for pg in doc:  # 标题文字框先并成视觉行，再拿去判断是哪种标题
+        raw = [{"text": "".join(sp["text"] for sp in ln["spans"]).strip(), "x0": ln["bbox"][0], "y0": ln["bbox"][1],
+                "x1": ln["bbox"][2], "y1": ln["bbox"][3]}
+               for b in pg.get_text("dict")["blocks"] for ln in b.get("lines", [])]
+        texts += [clean(l["text"]) for l in merge_heading_pieces([l for l in raw if l["text"]])]
     UNIT = pick_unit(texts, args.unit, args.unit_regex, args.unit_label)
     print(f"知识点标题按「{UNIT.label}」识别（{UNIT.rx.pattern}）")
     cards, report = build_cards(doc, args, clean)
