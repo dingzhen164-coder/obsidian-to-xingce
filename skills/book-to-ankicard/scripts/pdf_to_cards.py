@@ -35,7 +35,7 @@ import numpy as np
 import pymupdf
 
 # ---------------------------------------------------------------- 配置
-DEFAULT_DROP = [r"法考资料免费分享公众号[：:]?法考我志在必得", r"法考小米", r"考小米", r"方圆众合教育", r"FANGYUAN\s*ZHONGHE\s*EDUCATION", r"[：:]?氵", r"添加百度网?盘?好?友?", r"网盘好友"]  # 水印/广告词（正则）
+DEFAULT_DROP = [r"法考资料免费分享公众号[：:]?法考我志在必得", r"法考小米", r"考小米", r"方圆众合教育", r"FANGYUAN\s*ZHONGHE\s*EDUCATION", r"[：:]?氵", r"添加百度网?盘?好?友?", r"网盘好友", r"好友[：:]"]  # 水印/广告词（正则）
 HEADER_PATTERNS = [r"^\S{1,6}\s*[|｜]?\s*授课精要$", r"^续表$"]  # 页眉（OCR 常把竖线丢掉）；续表单独处理
 DEFAULT_FIXES = [  # (正则, 替换) —— 只放“几乎不可能是对的”的 OCR 错字；数字、法条号绝不自动改
     ("自\u5df2", "自\u5df1"),  # 自已 → 自己（OCR 把“己”认成“已”）
@@ -58,6 +58,7 @@ UNIT_PRESETS = {  # 名字 → (正则（第 1 组=编号，第 2 组=标题）,
 PARENT_PATTERNS = [
     (1, re.compile(r"^\s*第\s*([" + ZH_NUM + r"\d]+)\s*(部分|编|篇)\s*(.*)$"), None),
     (2, re.compile(r"^\s*第\s*([" + ZH_NUM + r"\d]+)\s*[章讲]\s*(.*)$"), "章"),      # 「第一章」「第一讲」
+    (2, re.compile(r"^\s*专题\s*([" + ZH_NUM + r"\d]+)\s*(.*)$"), "专题"),        # 众合讲义：「专题三 民事法律行为」
     (3, re.compile(r"^\s*第\s*([" + ZH_NUM + r"\d]+)\s*节\s*(.*)$"), "节"),
 ]
 
@@ -126,6 +127,9 @@ def match_parent(text: str):
     """章 / 部分标题 → (级别, 编号文字, 标题全文)；不是则 None。"""
     t = text.strip()
     if len(t) > 40:
+        return None
+    # 带条文号的是在介绍法条的章（如「第十章 期间计算（第200—204条）（共5条）」），不是这本书的章节标题
+    if re.search(r"第\s*\d+\s*[—\-－~～至一]\s*\d+\s*条|共\s*\d+\s*条|\d+\s*条\s*[）)]", t):
         return None
     for level, rx, _lab in PARENT_PATTERNS:
         m = rx.match(t)
@@ -671,6 +675,85 @@ def detect_figures(page: Page, tables: list[Table]):
     return boxes
 
 
+CAPTION = re.compile(r"^\s*[（(][^（）()]{2,40}(?:图|导图)\s*[）)]\s*$")
+DIAGRAM_LABEL = re.compile(r"[→←]|^\s*[一—－十├└┌]")   # 图里的标签：带箭头，或以连线开头（OCR 把“—”“├”认成“一”“十”）
+
+
+def caption_figures(page: Page, tables: list[Table], figs: list) -> list:
+    """看图注认图：众合讲义的思维导图 / 流程图 / 框架图下面都有一行「（××法律思维导图）」「（××流程图）」。
+    detect_figures 靠竖线、斜线认图，括号图、细线树形图常常认不出来（或只认出上半截），图里的字就被当成一行行正文塞进卡片。
+    这里从图注往上收：连续的短行（图里的标签），碰到知识点 / 章节标题、表格、整行正文、大段空白或一张已经认出的图就停；
+    - 上面紧挨着一张已经认出的图（只认出了上半截）：把那张图往下拉到图注（figs 里的框直接改）；
+    - 否则收到 3 行以上就把这一片（到图注上沿）裁成图片。
+    返回新增的框（像素坐标）。"""
+    sc = page.scale
+    out = []
+    lines = sorted(page.lines, key=lambda l: l["y0"])
+
+    def inside(ln, fb):
+        cx, cy = (ln["x0"] + ln["x1"]) / 2 * sc, (ln["y0"] + ln["y1"]) / 2 * sc
+        return fb[0] - 20 <= cx <= fb[2] + 20 and fb[1] - 10 <= cy <= fb[3] + 10
+
+    for i, cap in enumerate(lines):
+        if not CAPTION.match(cap["text"]):
+            continue
+        cy = cap["y0"] * sc
+        base = next((fb for fb in figs + out if fb[1] - 10 <= cy <= fb[3] + 40 * sc), None)
+        if base is not None:
+            # 图注紧挨着一张已经认出来的图：再看它上面有没有漏掉的几行短标签（跨页的图在新一页的开头常常剩两三行）
+            ext = []
+            for ln in reversed([l for l in lines if l["y1"] * sc <= base[1] + 4]):
+                t = ln["text"].strip()
+                if ln["y0"] < page.h * 0.08 or UNIT.match(t) or match_parent(t) or SECTION.match(t) or CAPTION.match(t) \
+                        or (len(t) > 28 and (ln["x1"] - ln["x0"]) > page.w * 0.6) or base[1] / sc - ln["y1"] > 20 + 18 * len(ext):
+                    break
+                ext.append(ln)
+            if ext and all(l["y0"] < page.h * 0.3 for l in ext):     # 只在页面上部（跨页续图）这样补
+                base[1] = int(min(l["y0"] for l in ext) * sc) - 8
+                base[0] = min(base[0], int(min(l["x0"] for l in ext) * sc) - 10)
+                base[2] = max(base[2], int(max(l["x1"] for l in ext) * sc) + 10)
+            continue
+        got, top, above = [], cap["y0"], None
+        for ln in reversed(lines[:i]):
+            t = ln["text"].strip()
+            if ln["y1"] > cap["y0"] + 1:
+                continue
+            hit = next((fb for fb in figs + out if inside(ln, fb)), None)
+            if hit is not None:                        # 碰到一张已经认出的图：多半是同一张图的上半截
+                above = hit
+                break
+            if top - ln["y1"] > 45:                    # 大段空白：图的上沿到了
+                break
+            if UNIT.match(t) or match_parent(t) or SECTION.match(t) or CAPTION.match(t):
+                break
+            cx, cyl = (ln["x0"] + ln["x1"]) / 2 * sc, (ln["y0"] + ln["y1"]) / 2 * sc
+            if any(tb.bbox_px[0] - 6 <= cx <= tb.bbox_px[2] + 6 and tb.bbox_px[1] - 6 <= cyl <= tb.bbox_px[3] + 6 for tb in tables):
+                break
+            if len(t) > 28 and (ln["x1"] - ln["x0"]) > page.w * 0.6 and not DIAGRAM_LABEL.search(t):
+                break                                  # 整行正文（带箭头 / 连线的长标签除外）
+            got.append(ln)
+            top = min(top, ln["y0"])
+        if above is None:                              # 没碰上：看上沿附近有没有一张图（只隔着一点空白）
+            above = next((fb for fb in figs + out if 0 <= top * sc - fb[3] <= 45 * sc), None)
+        x0 = min([l["x0"] for l in got] or [cap["x0"]]) - 14
+        x1 = max([l["x1"] for l in got] or [cap["x1"]]) + 14
+        y1 = int((cap["y0"] - 3) * sc)
+        if above is not None:
+            above[0], above[2] = min(above[0], int(max(0, x0) * sc)), max(above[2], int(min(page.w, x1) * sc))
+            above[3] = max(above[3], y1)
+            continue
+        if len(got) < 3:
+            continue
+        y0 = min(l["y0"] for l in got) - 10
+        out.append([int(max(0, x0) * sc), int(max(0, y0) * sc), int(min(page.w, x1) * sc), y1])
+    # 图的上沿不要压到上一张图的图注（detect_figures 往上多留了 30px）
+    for fb in figs + out:
+        for cap in lines:
+            if CAPTION.match(cap["text"]) and fb[1] - 4 <= cap["y1"] * sc <= fb[1] + 50 and cap["y0"] * sc < fb[1] + 50 < fb[3]:
+                fb[1] = int(cap["y1"] * sc) + 4
+    return out
+
+
 def merge_continued(tables: list[Table]) -> list[Table]:
     """“续表”：题注相同的表，是上一张表在下一页的延续。把它的数据行并回上一张（只在列数能对上时）。"""
     out: list[Table] = []
@@ -735,7 +818,8 @@ def build_cards(doc, args, clean: Cleaner):
     for pg in pages:
         sc = pg.scale
         tabs = all_tables[pg.index]
-        figs = detect_figures(pg, tabs)
+        figs = [list(b_) for b_ in detect_figures(pg, tabs)]
+        figs += caption_figures(pg, tabs, figs)
         for fb in figs:
             stream.append({"kind": "figure", "page": pg.index, "y": fb[1] / sc, "box": fb, "pg": pg})
         for ln in pg.lines:
@@ -793,6 +877,11 @@ def build_cards(doc, args, clean: Cleaner):
     last_parent = ""
     # 「一、概述」后面紧跟着就是一个知识点标题（中间没有别的内容）：它是大节标题，不是知识点里的小节——归到上级标题，不并进上一个知识点
     lines_only = [x for x in kept if x["kind"] == "line"]
+    # 一页上有 4 个以上章节标题：是目录 / 法条章节一览，不是正文的章节标题
+    par_cnt: dict[int, int] = defaultdict(int)
+    for x in lines_only:
+        if match_parent(x["text"]):
+            par_cnt[x["page"]] += 1
     for i_, x in enumerate(lines_only[:-1]):
         if SECTION.match(x["text"]) and not UNIT.match(x["text"]) and UNIT.match(lines_only[i_ + 1]["text"]) \
                 and lines_only[i_ + 1]["page"] - x["page"] <= 1:
@@ -809,7 +898,7 @@ def build_cards(doc, args, clean: Cleaner):
                 cur = {"no": m[0], "title": m[1], "ctx": [ctx[k] for k in sorted(ctx)], "els": []}
                 segs.append(cur)
                 continue
-            par = match_parent(e["text"])
+            par = match_parent(e["text"]) if par_cnt[e["page"]] < 4 else None
             if par:
                 level, full = par
                 ctx[level] = full
@@ -1019,19 +1108,19 @@ def assemble(seg, idx, args, clean):
     back = "\n".join(md)
     chapter = ""
     for c in reversed(seg["ctx"]):
-        if "章" in c[:6] or "节" in c[:6] or "讲" in c[:6]:
+        if "章" in c[:6] or "节" in c[:6] or "讲" in c[:6] or c.startswith("专题"):
             chapter = c
             break
     path = " · ".join(seg["ctx"])
-    short = "".join(re.match(r"^(第\s*[" + ZH_NUM + r"\d]+\s*(?:部分|编|篇|章|讲|节))", c).group(1).replace(" ", "")
-                    for c in seg["ctx"] if re.match(r"^第\s*[" + ZH_NUM + r"\d]+\s*(?:部分|编|篇|章|讲|节)", c))
+    short = "".join(re.match(r"^(第\s*[" + ZH_NUM + r"\d]+\s*(?:部分|编|篇|章|讲|节)|专题\s*[" + ZH_NUM + r"\d]+)", c).group(1).replace(" ", "")
+                    for c in seg["ctx"] if re.match(r"^(第\s*[" + ZH_NUM + r"\d]+\s*(?:部分|编|篇|章|讲|节)|专题\s*[" + ZH_NUM + r"\d]+)", c))
     tags = [t for t in (args.subject, f"{unit_label}{no}", re.sub(r"\s+", "_", chapter)) if t]
     # 正面：有 部分/章 时写成 【三国法1.2.1】标题（部分.章.知识点）；只有章时 【民法2.4】；没有上级标题时 【民法·考点4】
     nums = []
     for c in seg["ctx"]:
-        m_ = re.match(r"^第\s*([" + ZH_NUM + r"\d]+)\s*(?:部分|编|篇|章|讲|节)", c)
-        if m_ and zh_to_int(m_.group(1)):
-            nums.append(str(zh_to_int(m_.group(1))))
+        m_ = re.match(r"^(?:第\s*([" + ZH_NUM + r"\d]+)\s*(?:部分|编|篇|章|讲|节)|专题\s*([" + ZH_NUM + r"\d]+))", c)
+        if m_ and zh_to_int(m_.group(1) or m_.group(2)):
+            nums.append(str(zh_to_int(m_.group(1) or m_.group(2))))
     front = f"【{args.subject}{'.'.join(nums + [str(no)])}】{title}" if nums else f"【{args.subject}·{unit_label}{no}】{title}"
     card = {
         "front": front,
